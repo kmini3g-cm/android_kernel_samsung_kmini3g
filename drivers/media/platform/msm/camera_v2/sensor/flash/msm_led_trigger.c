@@ -27,6 +27,7 @@
 #endif
 
 static struct msm_led_flash_ctrl_t fctrl;
+unsigned int flash_widget_status = 0;
 
 extern struct class *camera_class; /*sys/class/camera*/
 struct device *flash_dev;
@@ -41,6 +42,7 @@ static ssize_t qpnp_led_flash(struct device *dev,
 	switch (tmp) {
 	case MSM_CAMERA_LED_OFF:
 		fctrl.rear_flash_status=MSM_CAMERA_LED_OFF;
+		flash_widget_status=0;
 		for (i = 0; i < fctrl.num_sources; i++)
 			if (fctrl.flash_trigger[i])
 				led_trigger_event(fctrl.flash_trigger[i], 0);
@@ -50,12 +52,14 @@ static ssize_t qpnp_led_flash(struct device *dev,
 
 	case MSM_CAMERA_LED_LOW:
 		fctrl.rear_flash_status=MSM_CAMERA_LED_LOW;
+		flash_widget_status=1;
 		if (fctrl.torch_trigger)
 			led_trigger_event(fctrl.torch_trigger, fctrl.torch_op_current);
 		break;
 
 	case MSM_CAMERA_LED_HIGH:
 		fctrl.rear_flash_status=MSM_CAMERA_LED_HIGH;
+		flash_widget_status=1;
 		for (i = 0; i < fctrl.num_sources; i++)
 			if (fctrl.flash_trigger[i])
 				led_trigger_event(fctrl.flash_trigger[i], 0);
@@ -65,6 +69,7 @@ static ssize_t qpnp_led_flash(struct device *dev,
 
 	default:
 		fctrl.rear_flash_status=MSM_CAMERA_LED_OFF;
+		flash_widget_status=0;
 		for (i = 0; i < fctrl.num_sources; i++)
 			if (fctrl.flash_trigger[i])
 				led_trigger_event(fctrl.flash_trigger[i], 0);
@@ -90,10 +95,17 @@ static int32_t msm_led_trigger_get_subdev_id(struct msm_led_flash_ctrl_t *fctrl,
 	CDBG("%s:%d subdev_id %d\n", __func__, __LINE__, *subdev_id);
 	return 0;
 }
-#if defined(CONFIG_MACH_AFYONLTE_TMO) || defined(CONFIG_MACH_VICTORLTE_CTC)
+#if defined(CONFIG_MACH_AFYONLTE_TMO) || defined(CONFIG_MACH_VICTORLTE_CTC) \
+	|| defined(CONFIG_MACH_AFYONLTE_CAN) \
+	|| defined (CONFIG_MACH_AFYONLTE_MTR)
 int32_t s5k4ecgx_set_flash(int mode)
 {
 	uint32_t i;
+	if( flash_widget_status == 1 )
+	{
+		printk(" %s Dont handle flash..rear_flash is set\n",__func__);
+		return 0;
+	}
 	switch (mode) {
 	case MSM_CAMERA_LED_OFF:
 	fctrl.rear_flash_status=MSM_CAMERA_LED_OFF;
@@ -142,12 +154,20 @@ static int32_t msm_led_trigger_config(struct msm_led_flash_ctrl_t *fctrl,
 		pr_err("failed\n");
 		return -EINVAL;
 	}
+#if defined(CONFIG_MACH_AFYONLTE_TMO) || defined(CONFIG_MACH_AFYONLTE_CAN) \
+	|| defined (CONFIG_MACH_AFYONLTE_MTR)
+	if( flash_widget_status == 1 )
+	{
+		printk(" %s Dont handle flash..rear_flash is set\n",__func__);
+		return 0;
+	}
+#else
 	if(fctrl->rear_flash_status == MSM_CAMERA_LED_LOW || fctrl->rear_flash_status == MSM_CAMERA_LED_HIGH)
 	{
 		printk("Dont handle flash..rear_flash is set\n");
 		return rc;
 	}
-
+#endif
 	switch (cfg->cfgtype) {
 	case MSM_CAMERA_LED_OFF:
 		for (i = 0; i < fctrl->num_sources; i++)

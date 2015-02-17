@@ -34,7 +34,7 @@ enum {
 	LANHUB = 0,
 	LANHUB_TA = 1,
 };
-
+extern struct switch_dev switch_dock;
 struct sm5502_platform_data {
 	void (*callback)(enum cable_type_t cable_type, int attached);
 #if defined(CONFIG_MUIC_SM5502_SUPPORT_LANHUB_TA)

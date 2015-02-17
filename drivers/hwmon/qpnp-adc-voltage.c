@@ -811,7 +811,13 @@ static int32_t qpnp_vadc_calib_device(struct qpnp_vadc_chip *vadc)
 	}
 
 	pr_debug("absolute reference raw: 625mV:0x%x 1.25V:0x%x\n",
-				calib_read_1, calib_read_2);
+				calib_read_2, calib_read_1);
+	if (calib_read_1 == calib_read_2) {
+		pr_err("absolute reference raw: 625mV:0x%x 1.25V:0x%x\n",
+				calib_read_2, calib_read_1);
+		rc = -EINVAL;
+		goto calib_fail;
+	}
 
 	vadc->adc->amux_prop->chan_prop->adc_graph[CALIB_ABSOLUTE].dy =
 					(calib_read_1 - calib_read_2);
@@ -891,6 +897,12 @@ static int32_t qpnp_vadc_calib_device(struct qpnp_vadc_chip *vadc)
 
 	pr_debug("ratiometric reference raw: VDD:0x%x GND:0x%x\n",
 				calib_read_1, calib_read_2);
+	if (calib_read_1 == calib_read_2) {
+		pr_err("ratiometric reference raw: VDD:0x%x GND:0x%x\n",
+				calib_read_1, calib_read_2);
+		rc = -EINVAL;
+		goto calib_fail;
+	}
 	vadc->adc->amux_prop->chan_prop->adc_graph[CALIB_RATIOMETRIC].dy =
 					(calib_read_1 - calib_read_2);
 	vadc->adc->amux_prop->chan_prop->adc_graph[CALIB_RATIOMETRIC].dx =
@@ -1101,6 +1113,8 @@ int32_t qpnp_vadc_conv_seq_request(struct qpnp_vadc_chip *vadc,
 		qpnp_vadc_amux_scaling_ratio[amux_prescaling].num;
 	vadc->adc->amux_prop->chan_prop->offset_gain_denominator =
 		 qpnp_vadc_amux_scaling_ratio[amux_prescaling].den;
+	vadc->adc->amux_prop->chan_prop->calib_type =
+		vadc->adc->adc_channels[dt_index].calib_type;
 
 	scale_type = vadc->adc->adc_channels[dt_index].adc_scale_fn;
 	if (scale_type >= SCALE_NONE) {
@@ -1438,6 +1452,7 @@ err_setup:
 		i++;
 	}
 	hwmon_device_unregister(vadc->vadc_hwmon);
+	mutex_destroy(&vadc->adc->adc_lock);
 
 	return rc;
 }

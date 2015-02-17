@@ -18,7 +18,11 @@
 
 #define TSP_VERBOSE_DEBUG
 #define SEC_FACTORY_TEST
+#ifdef CONFIG_SEC_MEGA23G_COMMON
+#define SUPPORTED_TOUCH_KEY 1
+#else
 #define SUPPORTED_TOUCH_KEY 0
+#endif
 
 #include <linux/module.h>
 #include <linux/input.h>
@@ -44,12 +48,21 @@
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 #include <asm/io.h>
+#include <linux/power_supply.h>
 
+#if defined(CONFIG_USB_SWITCH_TSU6721) || defined(CONFIG_USB_SWITCH_RT8973) || defined(CONFIG_SM5502_MUIC)
+#include <linux/i2c/tsu6721.h>
+#endif
 #ifdef CONFIG_MACH_PXA_SAMSUNG
 #include <linux/sec-common.h>
 #endif
 /* added header file */
-#include "zinitix_touch_zxt_firmware_ZI002507.h"
+
+#ifdef CONFIG_SEC_MEGA23G_COMMON
+#include "zinitix_touch_zxt_firmware_ZI012405.h"
+#else
+#include "zinitix_touch_zxt_firmware_ZI002513.h"
+#endif
 #define NOT_SUPPORTED_TOUCH_DUMMY_KEY
 #define SUPPORTED_PALM_TOUCH
 
@@ -74,18 +87,22 @@ extern char *saved_command_line;
 #define SUPPORTED_BUTTON_NUM		4
 #endif
 #endif
+#define TSP_HW_ID_INDEX_NULL	3
 
 /* Upgrade Method*/
 #define TOUCH_ONESHOT_UPGRADE		1
 /* if you use isp mode, you must add i2c device :
 name = "zinitix_isp" , addr 0x50*/
-
 /* resolution offset */
 #define ABS_PT_OFFSET			(-1)
 
 #define TOUCH_FORCE_UPGRADE		1
 #define USE_CHECKSUM			1
+#ifdef CONFIG_SEC_MEGA23G_COMMON
+#define CHECK_HWID			1
+#else
 #define CHECK_HWID			0
+#endif
 
 #define CHIP_OFF_DELAY			50 /*ms*/
 #define CHIP_ON_DELAY			15 /*ms*/
@@ -112,14 +129,18 @@ enum key_event {
 	ICON_BUTTON_DOWN,
 	ICON_BUTTON_UP,
 };
-
+#ifdef CONFIG_SEC_MEGA23G_COMMON
+#define ESD_TIMER_INTERVAL		0
+#else
 /* ESD Protection */
 /*second : if 0, no use. if you have to use, 3 is recommended*/
 #define ESD_TIMER_INTERVAL		1
+#endif
 #define SCAN_RATE_HZ			100
 #define CHECK_ESD_TIMER			3
 
  /*Test Mode (Monitoring Raw Data) */
+#define SEC_DND_SHIFT_VALUE		3
 #define SEC_DND_N_COUNT			10
 #define SEC_DND_U_COUNT			2
 #define SEC_DND_FREQUENCY		99 /* 200khz */
@@ -205,6 +226,7 @@ struct reg_ioctl {
 #define BT532_POINT_STATUS_REG		0x0080
 #define BT532_ICON_STATUS_REG		0x00AA
 
+#define BT532_DND_SHIFT_VALUE	0x012B
 #define BT532_AFE_FREQUENCY		0x0100
 #define BT532_DND_N_COUNT		0x0122
 #define BT532_DND_U_COUNT		0x0135
@@ -279,6 +301,10 @@ struct reg_ioctl {
 #define zinitix_swap_v(a, b, t)		((t) = (a), (a) = (b), (b) = (t))
 #define zinitix_swap_16(s)		(((((s) & 0xff) << 8) | (((s) >> 8) & 0xff)))
 
+#ifdef CONFIG_SAMSUNG_LPM_MODE
+extern int poweroff_charging;
+#endif
+
 /* end header file */
 
 #ifdef SEC_FACTORY_TEST
@@ -289,6 +315,7 @@ struct reg_ioctl {
 #define TSP_CMD_Y_NUM			18
 #define TSP_CMD_X_NUM			30
 #define TSP_CMD_NODE_NUM		(TSP_CMD_Y_NUM * TSP_CMD_X_NUM)
+#define tostring(x) #x
 
 struct tsp_factory_info {
 	struct list_head cmd_list_head;
@@ -347,8 +374,11 @@ static void get_scantime(void *device_data);
 */
 static void run_delta_read(void *device_data);
 static void get_delta(void *device_data);
-
+static void get_module_vendor(void *device_data);
+static void get_config_ver(void *device_data);
 #define TSP_CMD(name, func) .cmd_name = name, .cmd_func = func
+
+u32 config_version;
 
 static struct tsp_cmd tsp_cmds[] = {
 	{TSP_CMD("fw_update", fw_update),},
@@ -359,6 +389,7 @@ static struct tsp_cmd tsp_cmds[] = {
 	{TSP_CMD("module_on_master", module_on_master),},
 	{TSP_CMD("module_off_slave", module_off_slave),},
 	{TSP_CMD("module_on_slave", module_on_slave),},
+	{TSP_CMD("get_module_vendor", get_module_vendor),},
 	{TSP_CMD("get_chip_vendor", get_chip_vendor),},
 	{TSP_CMD("get_chip_name", get_chip_name),},
 	{TSP_CMD("get_x_num", get_x_num),},
@@ -376,6 +407,7 @@ static struct tsp_cmd tsp_cmds[] = {
 */
 	{TSP_CMD("run_delta_read", run_delta_read),},
 	{TSP_CMD("get_delta", get_delta),},
+        {TSP_CMD("get_config_ver", get_config_ver),},
 };
 #if 0
 #ifdef SUPPORTED_TOUCH_KEY
@@ -404,6 +436,8 @@ static ssize_t touchkey_idac_menu(struct device *dev,
 
 #define TSP_NORMAL_EVENT_MSG 1
 static int m_ts_debug_mode = ZINITIX_DEBUG;
+static bool ta_connected =0;
+//void (*tsp_charger_status_cb)(int);
 
 #if ESD_TIMER_INTERVAL
 static struct workqueue_struct *esd_tmr_workqueue;
@@ -458,6 +492,7 @@ struct capa_info {
 	u16	total_node_num;
 	u16	hw_id;
 	u16	afe_frequency;
+	u16	shift_value;
 	u16	N_cnt;
 	u16	u_cnt;
 };
@@ -473,6 +508,7 @@ enum work_state {
 	SET_MODE,
 	HW_CALIBRAION,
 	RAW_DATA,
+	PROBE,
 };
 
 enum {
@@ -516,6 +552,9 @@ struct bt532_ts_info {
 	struct tsp_raw_data		*raw_data;
 #endif
 	struct regulator *vddo_vreg;
+	u8 tsp_type_hw;
+	struct regulator *vdd_en;
+	bool device_enabled;
 };
 /* Dummy touchkey code */
 #define KEY_DUMMY_HOME1		249
@@ -716,6 +755,26 @@ static struct miscdevice touch_misc_device = {
 #define TOUCH_IOCTL_DONOT_TOUCH_EVENT		_IOW(TOUCH_IOCTL_BASE, 19, int)
 
 struct bt532_ts_info *misc_info;
+
+static void bt532_firmware_check(struct bt532_ts_platform_data   *pdata)
+{
+#if defined(CONFIG_SEC_DEGAS_PROJECT)
+	misc_info->tsp_type_hw = TSP_HW_ID_INDEX_NULL;			//HW_ID 3
+
+	printk("gpio_get_value(TSP_ID_1:gpio%d)=%d, gpio_get_value(TSP_ID_2:gpio%d)=%d\n",\
+		pdata->tsp_vendor1, gpio_get_value(pdata->tsp_vendor1), pdata->tsp_vendor2, gpio_get_value(pdata->tsp_vendor2));
+
+	if(!gpio_get_value(pdata->tsp_vendor1))
+		zinitix_bit_clr(misc_info->tsp_type_hw,0);		//HW_ID 2
+	if(!gpio_get_value(pdata->tsp_vendor2))
+		zinitix_bit_clr(misc_info->tsp_type_hw,1);		//HW_ID 0
+
+	zinitix_printk("%s %d\n",__func__,misc_info->tsp_type_hw);
+
+#else
+	return;
+#endif
+}
 
 static bool get_raw_data(struct bt532_ts_info *info, u8 *buff, int skip_cnt)
 {
@@ -1046,6 +1105,7 @@ fail_power_sequence:
 
 static void bt532_hw_power(struct bt532_ts_info *info, int onoff)
 {
+	struct bt532_ts_platform_data *pdata = info->pdata;
 	if(onoff){
 		if (info->vddo_vreg)
 			regulator_enable(info->vddo_vreg);
@@ -1053,7 +1113,18 @@ static void bt532_hw_power(struct bt532_ts_info *info, int onoff)
 		if (info->vddo_vreg)
 			regulator_disable(info->vddo_vreg);
 	}
-	gpio_direction_output(info->pdata->tsp_en_gpio, onoff);
+	
+	if (pdata->tsp_supply_type == TSP_LDO_SUPPLY){
+		gpio_direction_output(info->pdata->tsp_en_gpio, onoff);
+	}else if (pdata->tsp_supply_type == TSP_REGULATOR_SUPPLY){
+		if(onoff){
+			if (info->vdd_en)
+				regulator_enable(info->vdd_en);
+		}else{
+			if (info->vdd_en)
+				regulator_disable(info->vdd_en);
+		}
+	}	
 	return;
 }
 
@@ -1077,6 +1148,42 @@ static bool bt532_power_control(struct bt532_ts_info *info, u8 ctl)
 	return true;
 }
 
+static void bt532_set_ta_status(struct bt532_ts_info *info)
+{
+	u16	reg_val;
+	printk("Inside bt532_set_ta_status()\n");
+
+	if(info->work_state == SUSPEND || info->work_state == PROBE)
+		return;
+
+	if (ta_connected) {
+		read_data(info->client, 0x011e,	(u8 *)&reg_val, 2);
+		zinitix_bit_clr(reg_val, 1);
+		zinitix_bit_set(reg_val, 14);
+		write_reg(info->client, 0x011e,	reg_val);
+		}
+	else {
+		read_data(info->client, 0x011e,	(u8 *)&reg_val, 2);
+		zinitix_bit_set(reg_val, 1);
+		zinitix_bit_clr(reg_val, 14);
+		write_reg(info->client, 0x011e,	reg_val);
+		}
+}
+
+void bt532_charger_status_cb(int status)
+{
+	int mode = (status == CABLE_TYPE_NONE);
+	printk("Inside bt532_charger_status_cb()\n");
+	if (mode)
+		ta_connected = false;
+	else
+		ta_connected = true;
+
+	bt532_set_ta_status(misc_info);
+
+	dev_info(&misc_info->client->dev, "TA %s\n",
+		mode ? "disconnected" : "connected");
+}
 #if TOUCH_ONESHOT_UPGRADE
 static bool ts_check_need_upgrade(struct bt532_ts_info *info,
 	u16 cur_version, u16 cur_minor_version, u16 cur_reg_version, u16 cur_hw_id)
@@ -1280,6 +1387,12 @@ static bool ts_hw_calibration(struct bt532_ts_info *info)
 	u16	chip_eeprom_info;
 	int time_out = 0;
 
+#if defined(CONFIG_SEC_DEGAS_PROJECT)
+	if (info->tsp_type_hw == TSP_HW_ID_INDEX_NULL){		//HW_ID 3
+		zinitix_printk("TSP panel wasn't connected to board\n");
+		return true;
+	}
+#endif
 	if (write_reg(client,
 		BT532_TOUCH_MODE, 0x07) != I2C_SUCCESS)
 		return false;
@@ -1513,6 +1626,10 @@ retry_init:
 	zinitix_debug_msg("afe frequency = %d\n", cap->afe_frequency);
 
 
+	if (read_data(client, BT532_DND_SHIFT_VALUE,
+				(u8 *)&cap->shift_value, 2) < 0)
+		goto fail_init;
+
 	/* get chip firmware version */
 	if (read_data(client, BT532_FIRMWARE_VERSION,
 		(u8 *)&cap->fw_version, 2) < 0)
@@ -1607,9 +1724,10 @@ retry_init:
 	if (write_reg(client, BT532_TOUCH_MODE, info->touch_mode) != I2C_SUCCESS)
 		goto fail_init;
 
+	bt532_set_ta_status(info);
 	/* soft calibration */
-	if (write_cmd(client, BT532_CALIBRATE_CMD) != I2C_SUCCESS)
-		goto fail_init;
+//	if (write_cmd(client, BT532_CALIBRATE_CMD) != I2C_SUCCESS)
+//		goto fail_init;
 
 	if (write_reg(client, BT532_INT_ENABLE_FLAG,
 		cap->ic_int_mask) != I2C_SUCCESS)
@@ -1738,6 +1856,7 @@ static bool mini_init_touch(struct bt532_ts_info *info)
 			info->touch_mode) != I2C_SUCCESS)
 		goto fail_mini_init;
 
+	bt532_set_ta_status(info);
 	/* soft calibration */
 	if (write_cmd(client, BT532_CALIBRATE_CMD) != I2C_SUCCESS)
 		goto fail_mini_init;
@@ -2096,6 +2215,9 @@ static int bt532_ts_resume(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct bt532_ts_info *info = i2c_get_clientdata(client);
 
+	if(info->device_enabled)
+		return 0;
+	info->device_enabled = 1;
 #if defined(TSP_VERBOSE_DEBUG)
 	dev_info(&client->dev, "resume++\n");
 #endif
@@ -2128,6 +2250,9 @@ static int bt532_ts_suspend(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct bt532_ts_info *info = i2c_get_clientdata(client);
 
+	if(!info->device_enabled)
+		return 0;
+	info->device_enabled = 0;
 #if defined(TSP_VERBOSE_DEBUG)
 	dev_info(&client->dev, "suspend++\n");
 #endif
@@ -2169,9 +2294,26 @@ static int bt532_ts_suspend(struct device *dev)
 }
 #endif
 
+static int bt532_input_open(struct input_dev *dev)
+{
+	struct bt532_ts_info *info;
+
+	pr_info("[TSP] %s\n", __func__);
+	info = input_get_drvdata(dev);
+	return bt532_ts_resume(&info->client->dev);
+}
+static void bt532_input_close(struct input_dev *dev)
+{
+	struct bt532_ts_info *info;
+
+	pr_info("[TSP] %s\n", __func__);
+	info = input_get_drvdata(dev);
+	bt532_ts_suspend(&info->client->dev);
+}
 static bool ts_set_touchmode(u16 value)
 {
 	int i;
+	u16	reg_val;
 
 	disable_irq(misc_info->irq);
 
@@ -2187,6 +2329,13 @@ static bool ts_set_touchmode(u16 value)
 	misc_info->work_state = SET_MODE;
 
 	if (value == TOUCH_DND_MODE) {
+		read_data(misc_info->client, 0x011e,	(u8 *)&reg_val, 2);
+		zinitix_bit_clr(reg_val, 1);
+		write_reg(misc_info->client, 0x011e,	reg_val);
+
+		if (write_reg(misc_info->client, BT532_DND_SHIFT_VALUE,
+						SEC_DND_SHIFT_VALUE) != I2C_SUCCESS)
+			dev_err(&misc_info->client->dev, "Failed to set DND_SHIFT_VALUE\n");		
 		if (write_reg(misc_info->client, BT532_DND_N_COUNT,
 			SEC_DND_N_COUNT) != I2C_SUCCESS)
 			printk(KERN_INFO "[zinitix_touch] TEST Mode : "
@@ -2201,6 +2350,9 @@ static bool ts_set_touchmode(u16 value)
 					"Fail to set BT532_AFE_FREQUENCY %d.\n", SEC_DND_FREQUENCY);
 	}
 	if (value == TOUCH_PDND_MODE) {
+		read_data(misc_info->client, 0x011e,	(u8 *)&reg_val, 2);
+		zinitix_bit_clr(reg_val, 1);
+		write_reg(misc_info->client, 0x011e,	reg_val);
 		if (write_reg(misc_info->client, BT532_DND_N_COUNT,
 			SEC_PDND_N_COUNT) != I2C_SUCCESS)
 			printk(KERN_INFO "[zinitix_touch] TEST Mode : "
@@ -2215,6 +2367,11 @@ static bool ts_set_touchmode(u16 value)
 					"Fail to set BT532_AFE_FREQUENCY %d.\n", SEC_PDND_FREQUENCY);
 	}
 	else if(misc_info->touch_mode == TOUCH_DND_MODE || misc_info->touch_mode == TOUCH_PDND_MODE) {
+		bt532_set_ta_status(misc_info);
+
+		if (write_reg(misc_info->client, BT532_DND_SHIFT_VALUE,
+						misc_info->cap_info.shift_value) != I2C_SUCCESS)
+			dev_err(&misc_info->client->dev, "Failed to set DND_SHIFT_VALUE\n");				
 		if (write_reg(misc_info->client, BT532_DND_N_COUNT,
 			misc_info->cap_info.N_cnt) != I2C_SUCCESS)
 			printk(KERN_INFO "[zinitix_touch] TEST Mode : "
@@ -2434,7 +2591,7 @@ static void get_fw_ver_bin(void *device_data)
 	vendor_id = ntohs(*(u16 *)&m_firmware_data[0x6b22]);
 	version = (u32)((u32)(hw_id & 0xff) << 16) | ((fw_version & 0xf ) << 12)
 				| ((fw_minor_version & 0xf) << 8) | (reg_version & 0xff);
-
+        config_version = version;
 	length = sizeof(vendor_id);
 	snprintf(finfo->cmd_buff, length + 1, "%s", (u8 *)&vendor_id);
 	snprintf(finfo->cmd_buff + length, sizeof(finfo->cmd_buff) - length,
@@ -2521,6 +2678,44 @@ static void module_on_slave(void *device_data)
 	return;
 }
 
+static void get_module_vendor(void *device_data)
+{
+	struct bt532_ts_info *info = (struct bt532_ts_info *)device_data;
+	struct i2c_client *client = info->client;
+	struct tsp_factory_info *fdata = info->factory_info;
+	char buff[16] = {0};
+	int val,val2;
+
+	set_default_result(info);
+	if (!(gpio_get_value(info->pdata->tsp_en_gpio)) ) {
+		dev_err(&client->dev, "%s: [ERROR] Touch is stopped\n",
+				__func__);
+		snprintf(buff, sizeof(buff), "%s", "TSP turned off");
+		set_cmd_result(info, buff, strnlen(buff, sizeof(buff)));
+		fdata->cmd_state = NOT_APPLICABLE;
+		return;
+	}
+	if (info->pdata->tsp_vendor1 > 0 && info->pdata->tsp_vendor2 > 0 ) {
+		gpio_tlmm_config(GPIO_CFG(info->pdata->tsp_vendor1, 0,
+				GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
+		gpio_tlmm_config(GPIO_CFG(info->pdata->tsp_vendor2, 0,
+				GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
+		val = gpio_get_value(info->pdata->tsp_vendor1);
+		val2 = gpio_get_value(info->pdata->tsp_vendor2);		
+		dev_info(&info->client->dev,
+			"%s: TSP_ID: %d[%d]%d[%d]\n", __func__,
+			info->pdata->tsp_vendor1, val,info->pdata->tsp_vendor2, val2);
+		snprintf(buff, sizeof(buff), "%s,%d%d", tostring(OK), val,val2);
+		fdata->cmd_state = OK;
+		set_cmd_result(info, buff, strnlen(buff, sizeof(buff)));
+		return;
+	}
+	snprintf(buff, sizeof(buff),  "%s", tostring(NG));
+	fdata->cmd_state = FAIL;
+	set_cmd_result(info, buff, strnlen(buff, sizeof(buff)));
+}
+
+
 #define BT532_VENDOR_NAME "ZINITIX"
 
 static void get_chip_vendor(void *device_data)
@@ -2533,6 +2728,25 @@ static void get_chip_vendor(void *device_data)
 
 	snprintf(finfo->cmd_buff, sizeof(finfo->cmd_buff),
 		"%s", BT532_VENDOR_NAME);
+	set_cmd_result(info, finfo->cmd_buff,
+		strnlen(finfo->cmd_buff, sizeof(finfo->cmd_buff)));
+	finfo->cmd_state = OK;
+
+	dev_info(&client->dev, "%s: %s(%d)\n", __func__, finfo->cmd_buff,
+		strnlen(finfo->cmd_buff, sizeof(finfo->cmd_buff)));
+
+	return;
+}
+static void get_config_ver(void *device_data)
+{
+	struct bt532_ts_info *info = (struct bt532_ts_info *)device_data;
+	struct i2c_client *client = info->client;
+	struct tsp_factory_info *finfo = info->factory_info;
+        const char *model_name = info->pdata->pname;
+
+	set_default_result(info);
+
+	snprintf(finfo->cmd_buff, sizeof(finfo->cmd_buff),"%s_ZI_%x", model_name,config_version);
 	set_cmd_result(info, finfo->cmd_buff,
 		strnlen(finfo->cmd_buff, sizeof(finfo->cmd_buff)));
 	finfo->cmd_state = OK;
@@ -3276,7 +3490,7 @@ static ssize_t show_touchkey_sensitivity(struct device *dev,
 	int i;
 
 #ifdef NOT_SUPPORTED_TOUCH_DUMMY_KEY
-	if (!strcmp(attr->attr.name, "touchkey_menu"))
+	if (!strcmp(attr->attr.name, "touchkey_recent"))
 		i = 0;
 	else if (!strcmp(attr->attr.name, "touchkey_back"))
 		i = 1;
@@ -3289,7 +3503,7 @@ static ssize_t show_touchkey_sensitivity(struct device *dev,
 #else
 	if (!strcmp(attr->attr.name, "touchkey_dummy_btn1"))
 		i = 0;
-	else if (!strcmp(attr->attr.name, "touchkey_menu"))
+	else if (!strcmp(attr->attr.name, "touchkey_recent"))
 		i = 1;
 	else if (!strcmp(attr->attr.name, "touchkey_back"))
 		i = 2;
@@ -3346,12 +3560,31 @@ static ssize_t show_menu_key_idac_data(struct device *dev,
 	return 0;
 }
 */
+#if SUPPORTED_TOUCH_KEY_LED
+static ssize_t touch_led_control(struct device *dev, struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct bt532_ts_info *info = dev_get_drvdata(dev);
+	u8 data;
+
+	sscanf(buf, "%hhu", &data);
+
+	printk("[TKEY] %s : %d _ %d\n",__func__,data,__LINE__);
+
+	if(data == 1)
+		gpio_direction_output(info->pdata->gpio_keyled, 1);
+	else
+		gpio_direction_output(info->pdata->gpio_keyled, 0);
+
+	return size;
+}
+#endif
 
 static DEVICE_ATTR(touchkey_threshold, S_IRUGO, show_touchkey_threshold, NULL);
 /*static DEVICE_ATTR(touch_sensitivity, S_IRUGO, back_key_state_show, NULL);*/
 //static DEVICE_ATTR(extra_button_event, S_IWUSR | S_IWGRP | S_IRUGO, NULL, enable_dummy_key );
-static DEVICE_ATTR(touchkey_menu, S_IRUGO, show_touchkey_sensitivity, NULL);
+//static DEVICE_ATTR(touchkey_menu, S_IRUGO, show_touchkey_sensitivity, NULL);
 static DEVICE_ATTR(touchkey_back, S_IRUGO, show_touchkey_sensitivity, NULL);
+static DEVICE_ATTR(touchkey_recent, S_IRUGO, show_touchkey_sensitivity, NULL);
 #ifndef NOT_SUPPORTED_TOUCH_DUMMY_KEY
 static DEVICE_ATTR(touchkey_dummy_btn1, S_IRUGO,
 					show_touchkey_sensitivity, NULL);
@@ -3367,12 +3600,16 @@ static DEVICE_ATTR(touchkey_raw_back, S_IRUGO, show_back_key_raw_data, NULL);
 static DEVICE_ATTR(touchkey_raw_menu, S_IRUGO, show_menu_key_raw_data, NULL);
 /*static DEVICE_ATTR(touchkey_idac_back, S_IRUGO, show_back_key_idac_data, NULL);
 static DEVICE_ATTR(touchkey_idac_menu, S_IRUGO, show_menu_key_idac_data, NULL);*/
+#if SUPPORTED_TOUCH_KEY_LED
+static DEVICE_ATTR(brightness, 0664, NULL, touch_led_control);
+#endif
 
 static struct attribute *touchkey_attributes[] = {
 	&dev_attr_touchkey_threshold.attr,
 	/*&dev_attr_touch_sensitivity.attr,*/
 	&dev_attr_touchkey_back.attr,
-	&dev_attr_touchkey_menu.attr,
+//	&dev_attr_touchkey_menu.attr,
+	&dev_attr_touchkey_recent.attr,
 	//&dev_attr_autocal_stat.attr,
 	//&dev_attr_extra_button_event.attr,
 	&dev_attr_touchkey_raw_menu.attr,
@@ -3385,6 +3622,9 @@ static struct attribute *touchkey_attributes[] = {
 #endif
 	//&dev_attr_touchkey_idac_back.attr,
 	//&dev_attr_touchkey_idac_menu.attr,
+#if SUPPORTED_TOUCH_KEY_LED	
+	&dev_attr_brightness.attr,
+#endif	
 	NULL,
 };
 static struct attribute_group touchkey_attr_group = {
@@ -3848,23 +4088,39 @@ static int zinitix_init_gpio(struct bt532_ts_platform_data *pdata)
 	gpio_tlmm_config(GPIO_CFG(pdata->gpio_int, 0,
 		GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
 
-
-	ret = gpio_request(pdata->tsp_en_gpio, "zinitix_tsp_en_gpio");
-	if(ret) {
-		pr_err("[TSP]%s: unable to request zinitix_tsp_en_gpio [%d]\n",
-			__func__, pdata->tsp_en_gpio);
+#ifndef CONFIG_SEC_MEGA23G_COMMON
+	ret = gpio_request(pdata->tsp_vendor1, "zinitix_tsp_vendor1");
+	if (ret) {
+		pr_err("[TSP]%s: unable to request zinitix_tsp_vendor1 [%d]\n",
+				__func__, pdata->tsp_vendor1);
 		return ret;
 	}
-	gpio_tlmm_config(GPIO_CFG(pdata->tsp_en_gpio, 0,
-		GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
+	ret = gpio_request(pdata->tsp_vendor2, "zinitix_tsp_vendor2");
+	if (ret) {
+		pr_err("[TSP]%s: unable to request zinitix_tsp_vendor2 [%d]\n",
+				__func__, pdata->tsp_vendor2);
+		return ret;
+	}
+#endif
+
+	if (pdata->tsp_supply_type == TSP_LDO_SUPPLY)
+	{
+		ret = gpio_request(pdata->tsp_en_gpio, "zinitix_tsp_en_gpio");
+		if(ret) {
+			pr_err("[TSP]%s: unable to request zinitix_tsp_en_gpio [%d]\n",
+				__func__, pdata->tsp_en_gpio);
+			return ret;
+		}
+		gpio_tlmm_config(GPIO_CFG(pdata->tsp_en_gpio, 0,
+			GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
+	}
 
 #if SUPPORTED_TOUCH_KEY_LED
 	if (pdata->gpio_keyled >= 0) {
 		ret = gpio_request(pdata->gpio_keyled, "key_led_gpio");
 		if (ret < 0) {
 			pr_err("%s: gpio_request failed: %d\n", __func__, ret);
-			ret = -EINVAL;
-			//goto err_no_platform_data;
+			return ret;
 		}
 	}
 #endif
@@ -3932,6 +4188,13 @@ static int bt532_ts_probe_dt(struct device_node *np,
 				&pdata->tsp_supply_type);
 	if (ret < 0) {
 		pr_err("%s: failed to read property tsp_vdd_supply_type\n",
+			__func__);
+		return ret;
+	}
+	ret = of_property_read_string(np, "zinitix,pname",
+				&pdata->pname);
+	if (ret < 0) {
+		pr_err("%s: failed to read property config_ver\n",
 			__func__);
 		return ret;
 	}
@@ -4005,6 +4268,7 @@ static int bt532_ts_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, info);
 	info->client = client;
 	info->pdata = pdata;
+	info->device_enabled = 1;
 
 	input_dev = input_allocate_device();
 	if (!input_dev) {
@@ -4014,13 +4278,23 @@ static int bt532_ts_probe(struct i2c_client *client,
 	}
 
 	info->input_dev = input_dev;
-
+	info->work_state = PROBE;
 	info->vddo_vreg = regulator_get(&info->client->dev,"vddo");
 	if (IS_ERR(info->vddo_vreg)){
 		info->vddo_vreg = NULL;
 		printk(KERN_INFO "info->vddo_vreg error\n");
 		ret = -EPERM;
 		goto err_power_sequence;
+	}
+	if (pdata->tsp_supply_type == TSP_REGULATOR_SUPPLY)
+	{
+		info->vdd_en = regulator_get(&info->client->dev,"vdd_en");
+		if (IS_ERR(info->vdd_en)){
+			info->vdd_en = NULL;
+			printk(KERN_INFO "info->vdd_en error\n");
+			ret = -EPERM;
+			goto err_power_sequence;
+		}
 	}
 	/* power on */
 	if (bt532_power_control(info, POWER_ON_SEQUENCE) == false) {
@@ -4037,6 +4311,8 @@ static int bt532_ts_probe(struct i2c_client *client,
 	/* init touch mode */
 	info->touch_mode = TOUCH_POINT_MODE;
 	misc_info = info;
+
+	bt532_firmware_check(pdata);
 
 	if (init_touch(info) == false) {
 		ret = -EPERM;
@@ -4059,6 +4335,10 @@ static int bt532_ts_probe(struct i2c_client *client,
 	set_bit(EV_SYN, info->input_dev->evbit);
 	set_bit(EV_KEY, info->input_dev->evbit);
 	set_bit(EV_ABS, info->input_dev->evbit);
+#if SUPPORTED_TOUCH_KEY_LED
+	set_bit(EV_LED, info->input_dev->evbit);
+	set_bit(LED_MISC, info->input_dev->ledbit);
+#endif
 	set_bit(INPUT_PROP_DIRECT, info->input_dev->propbit);
 
 	for (i = 0; i < MAX_SUPPORTED_BUTTON_NUM; i++)
@@ -4102,6 +4382,8 @@ static int bt532_ts_probe(struct i2c_client *client,
 		0, 1, 0, 0);
 #endif
 
+	info->input_dev->open = bt532_input_open;
+	info->input_dev->close = bt532_input_close;
 	set_bit(MT_TOOL_FINGER, info->input_dev->keybit);
 	input_mt_init_slots(info->input_dev, info->cap_info.multi_fingers);
 
@@ -4164,7 +4446,7 @@ static int bt532_ts_probe(struct i2c_client *client,
 	dev_info(&client->dev, "zinitix touch probe.\r\n");
 
 #if defined(CONFIG_PM_RUNTIME)
-	pm_runtime_enable(&client->dev);
+	//pm_runtime_enable(&client->dev);
 #endif
 
 	sema_init(&info->raw_data_lock, 1);
@@ -4183,6 +4465,8 @@ static int bt532_ts_probe(struct i2c_client *client,
 		goto err_kthread_create_failed;
 	}
 #endif
+
+	//tsp_charger_status_cb = bt532_charger_status_cb;
 
 	return 0;
 
@@ -4285,15 +4569,12 @@ static struct i2c_device_id bt532_idtable[] = {
 	{ }
 };
 
-#if defined(CONFIG_PM)
+/*#if defined(CONFIG_PM)
 static const struct dev_pm_ops bt532_ts_pm_ops = {
-#if defined(CONFIG_PM_RUNTIME)
-	SET_RUNTIME_PM_OPS(bt532_ts_suspend, bt532_ts_resume, NULL)
-#else
-	SET_SYSTEM_SLEEP_PM_OPS(bt532_ts_suspend, bt532_ts_resume)
-#endif
+	.suspend = bt532_ts_suspend,
+	.resume = bt532_ts_resume,
 };
-#endif
+#endif*/
 
 static struct i2c_driver bt532_ts_driver = {
 	.probe	= bt532_ts_probe,
@@ -4303,34 +4584,27 @@ static struct i2c_driver bt532_ts_driver = {
 	.driver		= {
 		.owner	= THIS_MODULE,
 		.name	= BT532_TS_DEVICE,
-#if defined(CONFIG_PM)
+/*#if defined(CONFIG_PM)
 		.pm		= &bt532_ts_pm_ops,
-#endif
+#endif*/
 	.of_match_table = zinitix_match_table,
 	},
 };
-
-#if defined(CONFIG_SPA) || defined(CONFIG_SPA_LPM_MODE)
-extern int spa_lpm_charging_mode_get();
-#else
-extern unsigned int lpcharge;
-#endif
 
 static int __init bt532_ts_init(void)
 {
 	pr_debug("[TSP]: %s\n", __func__);
 	zinitix_printk("[TSP]: %s\n", __func__);
-/*
-#if defined(CONFIG_SPA) || defined(CONFIG_SPA_LPM_MODE)
-	if (!spa_lpm_charging_mode_get())
-#else
-	if (!lpcharge)
-#endif
-*/
-		return i2c_add_driver(&bt532_ts_driver);
-/*	else
+
+#ifdef CONFIG_SAMSUNG_LPM_MODE
+	if (poweroff_charging) {
+		pr_notice("%s : LPM Charging Mode!!\n", __func__);
 		return 0;
-*/
+	}
+#endif
+
+	return i2c_add_driver(&bt532_ts_driver);
+
 }
 
 static void __exit bt532_ts_exit(void)

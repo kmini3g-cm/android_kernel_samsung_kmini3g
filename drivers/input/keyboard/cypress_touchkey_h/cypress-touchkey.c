@@ -1361,16 +1361,27 @@ static DEVICE_ATTR(brightness, S_IRUGO | S_IWUSR | S_IWGRP,
 		NULL, cypress_touchkey_led_control);
 static DEVICE_ATTR(touch_sensitivity, S_IRUGO | S_IWUSR | S_IWGRP,
 		NULL, cypress_touchkey_sensitivity_control);
+#if defined(CONFIG_SEC_KLIMT_PROJECT)
+static DEVICE_ATTR(touchkey_recent, S_IRUGO,
+		cypress_touchkey_menu_show, NULL);
+static DEVICE_ATTR(touchkey_recent_raw, S_IRUGO,
+		cypress_touchkey_raw_data0_show, NULL);
+static DEVICE_ATTR(touchkey_idac3, S_IRUGO,
+		cypress_touchkey_idac0_show, NULL);
+static DEVICE_ATTR(touchkey_back_raw, S_IRUGO,
+		cypress_touchkey_raw_data1_show, NULL);
+#else
 static DEVICE_ATTR(touchkey_menu, S_IRUGO,
 		cypress_touchkey_menu_show, NULL);
 static DEVICE_ATTR(touchkey_raw_data0, S_IRUGO,
 		cypress_touchkey_raw_data0_show, NULL);
 static DEVICE_ATTR(touchkey_idac0, S_IRUGO,
 		cypress_touchkey_idac0_show, NULL);
-static DEVICE_ATTR(touchkey_back, S_IRUGO,
-		cypress_touchkey_back_show, NULL);
 static DEVICE_ATTR(touchkey_raw_data1, S_IRUGO,
 		cypress_touchkey_raw_data1_show, NULL);
+#endif
+static DEVICE_ATTR(touchkey_back, S_IRUGO,
+		cypress_touchkey_back_show, NULL);
 static DEVICE_ATTR(touchkey_idac1, S_IRUGO,
 		cypress_touchkey_idac1_show, NULL);
 static DEVICE_ATTR(touchkey_threshold, S_IRUGO,
@@ -1406,11 +1417,18 @@ static struct attribute *touchkey_attributes[] = {
 	&dev_attr_touchkey_firm_update.attr,
 	&dev_attr_brightness.attr,
 	&dev_attr_touch_sensitivity.attr,
+#if defined(CONFIG_SEC_KLIMT_PROJECT)
+	&dev_attr_touchkey_recent.attr,
+	&dev_attr_touchkey_recent_raw.attr,
+	&dev_attr_touchkey_idac3.attr,
+	&dev_attr_touchkey_back_raw.attr,
+#else
 	&dev_attr_touchkey_menu.attr,
 	&dev_attr_touchkey_raw_data0.attr,
 	&dev_attr_touchkey_idac0.attr,
-	&dev_attr_touchkey_back.attr,
 	&dev_attr_touchkey_raw_data1.attr,
+#endif
+	&dev_attr_touchkey_back.attr,
 	&dev_attr_touchkey_idac1.attr,
 	&dev_attr_touchkey_threshold.attr,
 	&dev_attr_touchkey_autocal_start.attr,
@@ -1590,6 +1608,8 @@ static int tkey_flash_fw(struct cypress_touchkey_info *info, u8 fw_path, bool fo
 	/* firmware version compare */
 #if defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
 	if (info->ic_fw_ver >= info->src_fw_ver && !force) {
+#elif defined(CONFIG_SEC_KLIMT_PROJECT)
+	if (1) {	//TEMP
 #else
 	if ((info->ic_fw_ver >= info->src_fw_ver && !force) || info->support_fw_update == false) {
 #endif
@@ -1704,6 +1724,9 @@ static int cypress_parse_dt(struct device *dev,
 	pdata->gpio_touchkey_id = of_get_named_gpio_flags(np, "cypress,touchkey_id-gpio",
 				0, &pdata->gpio_touchkey_id_flags);
 
+	pr_err("%s: SCL:%d, SDA:%d, INT:%d, ID:%d, VDD_GPIO:%d \n",
+			__func__, pdata->gpio_scl, pdata->gpio_sda, pdata->gpio_int,
+			pdata->gpio_touchkey_id, pdata->vdd_led);
 	return 0;
 }
 #else

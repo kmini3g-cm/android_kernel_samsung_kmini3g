@@ -32,17 +32,14 @@
 
 #define GPIO_TSP_nINT_SECURE	17
 
-#ifdef CONFIG_SEC_ATLANTIC_PROJECT
+#if defined(CONFIG_SEC_ATLANTIC_PROJECT) || defined(CONFIG_SEC_PATEK_PROJECT)
 #include <linux/of_gpio.h>
 #endif
 
 #ifdef CONFIG_TOUCHSCREEN_CYPRESS_CYTTSP5_PLATFORM_FW_UPGRADE
 /* #include "TSG5M_Kmini_rev_0C HW0x01FW0x0200.h" */
 #include "cyttsp5_firmware.h"
-//#ifdef SAMSUNG_TSP_INFO	
-#define HW_VERSION 0x01
-#define FW_VERSION 0x0200
-//#endif
+
 static struct cyttsp5_touch_firmware cyttsp5_firmware = {
 	.img = cyttsp4_img,
 	.size = ARRAY_SIZE(cyttsp4_img),
@@ -102,6 +99,79 @@ extern int avdd_gpio;
 struct regulator *iovdd_vreg;
 #endif
 
+#ifdef CONFIG_SEC_PATEK_PROJECT
+static int cyttsp5_hw_power(struct cyttsp5_core_platform_data *pdata, int on)
+{
+	int i, retval;
+
+	pr_err("%s:hyelin: irq_gpio1(%d): %d, (%s)\n", __func__, pdata->irq_gpio,gpio_get_value(pdata->irq_gpio),on? "on":"off");
+	if (on) {
+		/* Enable regulators according to the order */
+		for (i = 0; i < pdata->num_of_supply; i++) {
+			if (regulator_is_enabled(pdata->supplies[i].consumer)) {
+				pr_err("%s: %s is already enabled\n", __func__,
+					pdata->supplies[i].supply);
+			} else {
+				retval = regulator_enable(pdata->supplies[i].consumer);
+				if (retval) {
+					pr_err("%s: Fail to enable regulator %s[%d]\n",
+						__func__, pdata->supplies[i].supply, retval);
+					goto err;
+				}
+				pr_err("%s: %s is enabled[OK]\n",
+					__func__, pdata->supplies[i].supply);
+			}
+		}
+	} else {
+		/* Disable regulator */
+		for (i = 0; i < pdata->num_of_supply; i++) {
+			if (regulator_is_enabled(pdata->supplies[i].consumer)) {
+				retval = regulator_disable(pdata->supplies[i].consumer);
+				if (retval) {
+					pr_err("%s: Fail to disable regulator %s[%d]\n",
+						__func__, pdata->supplies[i].supply, retval);
+					goto err;
+				}
+				pr_err("%s: %s is disabled[OK]\n",
+					__func__, pdata->supplies[i].supply);
+			} else {
+				pr_err("%s: %s is already disabled\n", __func__,
+					pdata->supplies[i].supply);
+			}
+		}
+	}
+
+	msleep(50);
+	pr_err("[TSP] %s: supply0: %d, supply1: %d\n",
+		__func__, regulator_is_enabled(pdata->supplies[0].consumer),
+		regulator_is_enabled(pdata->supplies[1].consumer));
+
+	pr_err("%s:hyelin: irq_gpio2(%d): %d\n", __func__, pdata->irq_gpio, gpio_get_value(pdata->irq_gpio));
+	return 0;
+err:
+	if (on) {
+		for (i = 0; i < pdata->num_of_supply; i++) {
+			if (regulator_is_enabled(pdata->supplies[i].consumer)) {
+				retval = regulator_disable(pdata->supplies[i].consumer);
+				pr_err("%s: %s is disabled[%s]\n",
+						__func__, pdata->supplies[i].supply,
+						(retval < 0) ? "NG" : "OK");
+			}
+		}
+
+	} else {
+		for (i = 0; i < pdata->num_of_supply; i++) {
+			if (!regulator_is_enabled(pdata->supplies[i].consumer)) {
+				retval = regulator_enable(pdata->supplies[i].consumer);
+				pr_err("%s: %s is enabled[%s]\n",
+						__func__, pdata->supplies[i].supply,
+						(retval < 0) ? "NG" : "OK");
+			}
+		}
+	}
+	return -EINVAL;
+}
+#else
 static int cyttsp5_hw_power(struct cyttsp5_core_platform_data *pdata, int on)
 {
 
@@ -112,14 +182,15 @@ static int cyttsp5_hw_power(struct cyttsp5_core_platform_data *pdata, int on)
 
 
 #ifdef CONFIG_SEC_ATLANTIC_PROJECT
+
 	int ret;
 
         if(on){
                 if (iovdd_vreg)
                         regulator_enable(iovdd_vreg);
         }else{
-                if (iovdd_vreg)
-                        regulator_disable(iovdd_vreg);
+			if (iovdd_vreg)
+				regulator_disable(iovdd_vreg);
         }
 
 	ret = gpio_direction_output(avdd_gpio, on);
@@ -128,7 +199,6 @@ static int cyttsp5_hw_power(struct cyttsp5_core_platform_data *pdata, int on)
 			 __func__, avdd_gpio, ret);
 		return -EINVAL;
 	}
-	msleep(100);
 #else
 	int ret;
 
@@ -145,11 +215,11 @@ static int cyttsp5_hw_power(struct cyttsp5_core_platform_data *pdata, int on)
 			 __func__, pwr_3p3);
 		return -EINVAL;
 	}
-	msleep(100);
+	msleep(50);
 #endif
 	return 0;
 }
-
+#endif
 
 int cyttsp5_xres(struct cyttsp5_core_platform_data *pdata,
 		struct device *dev)
@@ -180,7 +250,7 @@ int cyttsp5_init(struct cyttsp5_core_platform_data *pdata,
 {
 	int irq_gpio = pdata->irq_gpio;
 	int rc = 0;
-#if !defined(CONFIG_SEC_ATLANTIC_PROJECT)
+#if !defined(CONFIG_SEC_ATLANTIC_PROJECT) && !defined(CONFIG_SEC_PATEK_PROJECT)
 	int pwr_1p8 = pdata->pwr_1p8;
 	int pwr_3p3 = pdata->pwr_3p3;
  #endif
@@ -201,14 +271,15 @@ int cyttsp5_init(struct cyttsp5_core_platform_data *pdata,
 		gpio_direction_input(irq_gpio);
 #ifdef CONFIG_SEC_ATLANTIC_PROJECT
 		gpio_request(avdd_gpio, "TSP_AVDD_gpio");
-#else
+#elif !defined(CONFIG_SEC_PATEK_PROJECT)
 		gpio_request(pwr_1p8, "TSP_1p8_GPIO");
 		gpio_request(pwr_3p3, "TSP_3p3_GPIO");
 #endif
 		cyttsp5_hw_power(pdata, 1);
 	} else {
 		cyttsp5_hw_power(pdata, 0);
-		gpio_free(irq_gpio);
+		if(!gpio_is_valid(irq_gpio))
+			gpio_free(irq_gpio);
 	}
 
 	dev_info(dev,
@@ -309,7 +380,7 @@ static struct cyttsp5_mt_platform_data _cyttsp5_mt_platform_data = {
 	.inp_dev_name = "sec_touchscreen",
 };
 
-#if !defined(CONFIG_SEC_ATLANTIC_PROJECT)
+#if !defined(CONFIG_SEC_ATLANTIC_PROJECT) && !defined(CONFIG_SEC_PATEK_PROJECT)
 static struct cyttsp5_btn_platform_data _cyttsp5_btn_platform_data = {
 	.inp_dev_name = "sec_touchkey",
 };
@@ -319,7 +390,7 @@ struct cyttsp5_platform_data _cyttsp5_platform_data = {
 	.core_pdata = &_cyttsp5_core_platform_data,
 	.mt_pdata = &_cyttsp5_mt_platform_data,
 	.loader_pdata = &_cyttsp5_loader_platform_data,
-#if !defined(CONFIG_SEC_ATLANTIC_PROJECT)
+#if !defined(CONFIG_SEC_ATLANTIC_PROJECT) && !defined(CONFIG_SEC_PATEK_PROJECT)
 	.btn_pdata = &_cyttsp5_btn_platform_data,
 #endif
 };

@@ -18,7 +18,7 @@
 *      Notwithstanding the above, under no circumstances may you combine this
 * software in any way with any other Broadcom software provided under a license
 * other than the GPL, without Broadcom's express prior written consent.
-* $Id: dhd_wlfc.h 453829 2014-02-06 12:28:45Z $
+* $Id: dhd_wlfc.h 472502 2014-04-24 05:59:06Z $
 *
 */
 #ifndef __wlfc_host_driver_definitions_h__
@@ -42,6 +42,9 @@
 #define WLFC_HANGER_ITEM_STATE_INUSE_SUPPRESSED		3
 #define WLFC_HANGER_ITEM_STATE_WAIT_CLEAN		4
 
+#define WLFC_HANGER_ITEM_WAIT_EVENT_COUNT		2
+#define WLFC_HANGER_ITEM_WAIT_EVENT_INVALID		255
+
 typedef enum {
 	Q_TYPE_PSQ,
 	Q_TYPE_AFQ
@@ -64,7 +67,8 @@ typedef enum ewlfc_mac_entry_action {
 typedef struct wlfc_hanger_item {
 	uint8	state;
 	uint8   gen;
-	uint8	pad[2];
+	uint8	waitevent;	/* wait txstatus_update and txcomplete before free a packet */
+	uint8	pad;
 	uint32	identifier;
 	void*	pkt;
 #ifdef PROP_TXSTATUS_DEBUG
@@ -472,8 +476,10 @@ int dhd_wlfc_commit_packets(dhd_pub_t *dhdp, f_commitpkt_t fcommit,
 int dhd_wlfc_txcomplete(dhd_pub_t *dhd, void *txp, bool success);
 int dhd_wlfc_init(dhd_pub_t *dhd);
 int dhd_wlfc_hostreorder_init(dhd_pub_t *dhd);
+#ifdef SUPPORT_P2P_GO_PS
 int dhd_wlfc_suspend(dhd_pub_t *dhd);
 int dhd_wlfc_resume(dhd_pub_t *dhd);
+#endif /* SUPPORT_P2P_GO_PS */
 int dhd_wlfc_cleanup_txq(dhd_pub_t *dhd, f_processpkt_t fn, void *arg);
 int dhd_wlfc_cleanup(dhd_pub_t *dhd, f_processpkt_t fn, void* arg);
 int dhd_wlfc_deinit(dhd_pub_t *dhd);

@@ -17,15 +17,56 @@
 #endif
 
 #include "sr352.h"
-#if defined (CONFIG_MACH_MILLETWIFIUS_OPEN) || defined (CONFIG_MACH_MILLETLTE_VZW) || defined (CONFIG_MACH_MILLETLTE_ATT)
+#if defined (CONFIG_MACH_MILLETWIFIUS_OPEN) || \
+    defined (CONFIG_MACH_MILLETLTE_VZW) || \
+    defined (CONFIG_MACH_MILLETLTE_ATT) || \
+    defined (CONFIG_MACH_MILLETLTE_CAN) || \
+    defined (CONFIG_MACH_MILLETLTE_TMO)
 #include "sr352_yuv_millet_wifi_usa.h"
-#elif defined (CONFIG_MACH_MATISSEWIFIUS_OPEN)
+#elif defined (CONFIG_MACH_MATISSEWIFIUS_OPEN) || \
+    defined (CONFIG_MACH_MATISSELTE_VZW) || \
+    defined (CONFIG_MACH_MATISSELTE_ATT)
 #include "sr352_yuv_matisse_wifi_usa.h"
 #elif defined (CONFIG_SEC_MATISSE_PROJECT)
 #include "sr352_yuv_matisse.h"
+#elif defined (CONFIG_MACH_DEGASLTE_SPR)
+#include "sr352_yuv_degas_spr.h"
 #else
 #include "sr352_yuv.h"
 #endif
+
+#if defined(CONFIG_MACH_MILLETWIFIUS_OPEN) || \
+    defined (CONFIG_MACH_MATISSEWIFIUS_OPEN) || \
+    defined (CONFIG_MACH_MILLETLTE_VZW) || \
+    defined (CONFIG_MACH_MILLETLTE_ATT) || \
+    defined (CONFIG_MACH_MILLETLTE_CAN) || \
+    defined (CONFIG_MACH_MATISSELTE_VZW) || \
+    defined (CONFIG_MACH_MATISSELTE_ATT) || \
+    defined (CONFIG_MACH_DEGASLTE_SPR) || \
+    defined (CONFIG_MACH_MILLETLTE_TMO)
+#define ANTIBANDING_60HZ 1
+//dummy declaration for 50HZ
+//for successful compilation
+#define sr352_50hz_setting sr352_60hz_setting
+#define sr352_HD_50hz_setting sr352_HD_60hz_setting
+#define sr352_AEAWB_Lock_50Hz sr352_AEAWB_Lock_60Hz
+#define sr352_AEAWB_Unlock_50Hz sr352_AEAWB_Unlock_60Hz
+#elif defined(CONFIG_MACH_MILLETWIFI_OPEN) || \
+    defined(CONFIG_MACH_MILLET3G_EUR) || \
+    defined(CONFIG_MACH_MATISSE3G_OPEN) || \
+    defined(CONFIG_MACH_MATISSEWIFI_OPEN)
+extern int back_camera_antibanding_get(void); /*add anti-banding code */
+#define ANTIBANDING_60HZ (back_camera_antibanding_get() == 60)
+#else
+#define ANTIBANDING_60HZ 0
+//dummy declaration for 60HZ
+//for successful compilation
+#define sr352_60hz_setting sr352_50hz_setting
+#define sr352_HD_60hz_setting sr352_HD_50hz_setting
+#define sr352_AEAWB_Lock_60Hz sr352_AEAWB_Lock_50Hz
+#define sr352_AEAWB_Unlock_60Hz sr352_AEAWB_Unlock_50Hz
+#endif
+
 
 #include "msm_sd.h"
 #include "camera.h"
@@ -69,10 +110,6 @@ void sr352_regs_table_init(char *filename);
 void sr352_regs_table_exit(void);
 #endif
 
-#if defined (CONFIG_MACH_MILLETWIFI_OPEN) || defined(CONFIG_MACH_MILLET3G_EUR)
-extern int back_camera_antibanding_get(void); /*add anti-banding code */
-#endif
-
 static struct yuv_ctrl sr352_ctrl;
 
 static int32_t cur_scene_mode_chg = 0;
@@ -83,10 +120,10 @@ void sr352_check_hw_revision(void);
 void sr352_check_hw_revision()
 {
     CDBG(" Hardware revision = %d\n",system_rev);
-#if defined(CONFIG_MACH_MILLETLTE_VZW)
+#if defined(CONFIG_MACH_MILLETLTE_VZW)|| defined (CONFIG_MACH_MILLETLTE_TMO)
             if(system_rev >= 1)
                 settings_type = 1;
-#elif defined (CONFIG_MACH_MILLETLTE_OPEN)
+#elif defined (CONFIG_MACH_MILLETLTE_OPEN) ||  defined (CONFIG_MACH_MILLETLTE_KOR)
             if(system_rev >= 6)
                 settings_type = 1;
 #elif defined (CONFIG_MACH_MILLETWIFI_OPEN)
@@ -98,9 +135,68 @@ void sr352_check_hw_revision()
 #elif defined (CONFIG_MACH_MILLET3G_EUR)
             if(system_rev >= 7)
                 settings_type = 1;
-#elif defined (CONFIG_SEC_MATISSE_PROJECT) || defined (CONFIG_MACH_MILLETLTE_ATT)
+#elif defined (CONFIG_SEC_MATISSE_PROJECT) || \
+      defined (CONFIG_MACH_MILLETLTE_ATT) || \
+      defined (CONFIG_MACH_MILLETLTE_CAN) || \
+      defined(CONFIG_SEC_DEGAS_PROJECT) || \
+      defined (CONFIG_MACH_MILLETLTE_TMO)
                 settings_type = 1;
 #endif
+}
+
+// maximum number of chipid and slaveid pairs
+// please change accordingly when you add more pairs
+#define MAX_NUM_PAIRS 1
+
+// Set of chipid and slaveid pairs not including the latest.
+// Order: Latest but one to the oldest
+// The latest values will be in the sensor lib file
+// index 0 - chipid
+// index 1 - slaveid
+static uint16_t ids[MAX_NUM_PAIRS][2] = {{0xC2,0x40},};
+
+int sr352_sensor_match_id(struct msm_camera_i2c_client *sensor_i2c_client,
+	struct msm_camera_slave_info *slave_info,
+	const char *sensor_name)
+{
+    uint16_t chipid = 0;
+    int32_t i = 0;
+
+    if (!sensor_i2c_client || !slave_info || !sensor_name) {
+        pr_err("%s:%d failed: %p %p %p\n",__func__, __LINE__,
+            sensor_i2c_client, slave_info,sensor_name);
+        return -EINVAL;
+    }
+
+    sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client,
+        slave_info->sensor_id_reg_addr,
+        &chipid,
+        sensor_i2c_client->data_type);
+
+    if(chipid!=slave_info->sensor_id){
+        pr_err("%s: chipid read=%x did not match with chipid=%x",
+			__func__, chipid, slave_info->sensor_id);
+
+        for( i=0; i<MAX_NUM_PAIRS; ++i){
+            chipid = 0;
+            sensor_i2c_client->cci_client->sid = ids[i][1] >> 1;
+            sensor_i2c_client->i2c_func_tbl->i2c_read(sensor_i2c_client,
+                slave_info->sensor_id_reg_addr,
+                &chipid,
+                sensor_i2c_client->data_type);
+            if(chipid == ids[i][0]){
+                break;
+            }
+            pr_err("%s: chipid read=%x did not match with chipid=%x",
+			__func__, chipid, ids[i][0]);
+        }
+    }
+
+    CDBG("%s sensor_name =%s slaveid = 0x%X sensorid = 0x%X DATA TYPE = %d\n",
+        __func__, sensor_name, sensor_i2c_client->cci_client->sid,
+        slave_info->sensor_id, sensor_i2c_client->data_type);
+
+    return 0;
 }
 
 int32_t sr352_set_exposure_compensation(struct msm_sensor_ctrl_t *s_ctrl, int mode)
@@ -174,9 +270,20 @@ int32_t sr352_set_effect(struct msm_sensor_ctrl_t *s_ctrl, int mode)
 int32_t sr352_set_scene_mode(struct msm_sensor_ctrl_t *s_ctrl, int mode)
 {
 	int32_t rc = 0;
-	CDBG("mode = %d", mode);
+	CDBG("Scene mode E = %d", mode);
 	if(cur_scene_mode_chg == 0)
+	{
+		CDBG("Scene mode Not Set = %d", mode);
 		return rc;
+	}
+
+	if(sr352_ctrl.prev_mode == CAMERA_MODE_INIT
+	 && mode == CAMERA_SCENE_AUTO)
+	{
+		CDBG("Scene mode X Not Set = %d", mode);
+		cur_scene_mode_chg = 0;
+		return rc;
+	}
 
 	switch (mode) {
 	case CAMERA_SCENE_AUTO:
@@ -221,43 +328,30 @@ int32_t sr352_set_scene_mode(struct msm_sensor_ctrl_t *s_ctrl, int mode)
 		rc = 0;
 	}
 	cur_scene_mode_chg = 0;
+	CDBG("Scene mode X = %d", mode);
 	return rc;
 }
 
 
 int32_t sr352_set_ae_awb_lock(struct msm_sensor_ctrl_t *s_ctrl, int mode)
 {
-	int32_t rc = 0;
-	CDBG("mode = %d", mode);
-#if defined(CONFIG_MACH_MILLETWIFIUS_OPEN) || defined (CONFIG_MACH_MATISSEWIFIUS_OPEN) || defined (CONFIG_MACH_MILLETLTE_VZW) ||defined (CONFIG_MACH_MILLETLTE_ATT)
-	if(mode) {
-		rc = SR352_WRITE_LIST(sr352_AEAWB_Lock_60Hz);
-	} else {
-		rc = SR352_WRITE_LIST(sr352_AEAWB_Unlock_60Hz);
-	}
-#elif defined(CONFIG_MACH_MILLETWIFI_OPEN) || defined(CONFIG_MACH_MILLET3G_EUR)
-	if(back_camera_antibanding_get() == 60) {
-		if(mode) {
-			rc = SR352_WRITE_LIST(sr352_AEAWB_Lock_60Hz);
-		} else {
-			rc = SR352_WRITE_LIST(sr352_AEAWB_Unlock_60Hz);
-		}
-	} else {
-		if(mode) {
-			rc = SR352_WRITE_LIST(sr352_AEAWB_Lock_50Hz);
-		} else {
-			rc = SR352_WRITE_LIST(sr352_AEAWB_Unlock_50Hz);
-		}
-	}
-#else
-	if(mode) {
-		rc = SR352_WRITE_LIST(sr352_AEAWB_Lock_50Hz);
-	} else {
-		rc = SR352_WRITE_LIST(sr352_AEAWB_Unlock_50Hz);
-	}
-#endif
+   int32_t rc = 0;
+   CDBG("mode = %d", mode);
 
-	return rc;
+   if(ANTIBANDING_60HZ) {
+      if(mode) {
+         rc = SR352_WRITE_LIST(sr352_AEAWB_Lock_60Hz);
+      } else {
+         rc = SR352_WRITE_LIST(sr352_AEAWB_Unlock_60Hz);
+      }
+   } else {
+      if(mode) {
+         rc = SR352_WRITE_LIST(sr352_AEAWB_Lock_50Hz);
+      } else {
+         rc = SR352_WRITE_LIST(sr352_AEAWB_Unlock_50Hz);
+      }
+   }
+   return rc;
 }
 
 int32_t sr352_set_white_balance(struct msm_sensor_ctrl_t *s_ctrl, int mode)
@@ -345,19 +439,11 @@ int32_t sr352_set_resolution(struct msm_sensor_ctrl_t *s_ctrl, int mode)
 		else {
 			rc = SR352_WRITE_LIST_BURST(sr352_recording_50Hz_HD);
 		}
-#if defined (CONFIG_SEC_MILLET_PROJECT) || defined (CONFIG_SEC_MATISSE_PROJECT)
-#if defined (CONFIG_MACH_MILLETWIFIUS_OPEN) || defined(CONFIG_MACH_MILLETLTE_VZW) || defined (CONFIG_MACH_MILLETLTE_ATT) || defined (CONFIG_MACH_MATISSEWIFIUS_OPEN)
-		rc = SR352_WRITE_LIST(sr352_HD_60hz_setting);
-#elif defined(CONFIG_MACH_MILLETWIFI_OPEN) || defined(CONFIG_MACH_MILLET3G_EUR)
-		if(back_camera_antibanding_get() == 60) {
-			rc = SR352_WRITE_LIST(sr352_HD_60hz_setting);
-		} else {
-			rc = SR352_WRITE_LIST(sr352_HD_50hz_setting);
+                if(ANTIBANDING_60HZ) {
+                        rc = SR352_WRITE_LIST(sr352_HD_60hz_setting);
+                } else {
+                        rc = SR352_WRITE_LIST(sr352_HD_50hz_setting);
 		}
-#else
-		rc = SR352_WRITE_LIST(sr352_HD_50hz_setting);
-#endif
-#endif
 		break;
 	case MSM_SENSOR_RES_4:
 		rc = SR352_WRITE_LIST(sr352_preview_800_480);
@@ -384,32 +470,23 @@ int32_t sr352_set_resolution(struct msm_sensor_ctrl_t *s_ctrl, int mode)
 
 void sr352_init_camera(struct msm_sensor_ctrl_t *s_ctrl)
 {
-	int32_t rc = 0;
-
-	if(settings_type == 1) {
-		rc = SR352_WRITE_LIST_BURST(sr352_Init_Reg_01);
-	}
-	else {
-		rc = SR352_WRITE_LIST_BURST(sr352_Init_Reg);
-	}
-
-	if(rc <0) {
-		pr_err("%s:%d error writing initsettings failed\n", __func__, __LINE__);
-	}
-#if defined (CONFIG_MACH_MILLETWIFIUS_OPEN) || defined (CONFIG_MACH_MATISSEWIFIUS_OPEN) || defined (CONFIG_MACH_MILLETLTE_VZW) || defined (CONFIG_MACH_MILLETLTE_ATT)
-	rc = SR352_WRITE_LIST(sr352_60hz_setting);
-#elif defined(CONFIG_MACH_MILLETWIFI_OPEN) || defined(CONFIG_MACH_MILLET3G_EUR)
-	if(back_camera_antibanding_get() == 60) {
-		rc = SR352_WRITE_LIST(sr352_60hz_setting);
-	} else {
-		rc = SR352_WRITE_LIST(sr352_50hz_setting);
-	}
-#else
-	rc = SR352_WRITE_LIST(sr352_50hz_setting);
-#endif
-	if(rc <0) {
-		pr_err("%s:%d error writing 50hz failed\n", __func__, __LINE__);
-	}
+   int32_t rc = 0;
+   if(settings_type == 1) {
+      rc = SR352_WRITE_LIST_BURST(sr352_Init_Reg_01);
+   } else {
+      rc = SR352_WRITE_LIST_BURST(sr352_Init_Reg);
+   }
+   if(rc <0) {
+      pr_err("%s:%d error writing initsettings failed\n", __func__, __LINE__);
+   }
+   if(ANTIBANDING_60HZ) {
+      rc = SR352_WRITE_LIST(sr352_60hz_setting);
+   } else {
+      rc = SR352_WRITE_LIST(sr352_50hz_setting);
+   }
+   if(rc <0) {
+      pr_err("%s:%d error writing 50hz failed\n", __func__, __LINE__);
+   }
 }
 
 int32_t sr352_get_exif(struct ioctl_native_cmd * exif_info)
@@ -548,6 +625,11 @@ int32_t sr352_sensor_config(struct msm_sensor_ctrl_t *s_ctrl,
 					if(sr352_ctrl.prev_mode == CAMERA_MODE_RECORDING && sr352_ctrl.settings.prev_resolution == MSM_SENSOR_RES_3)
 					{
 						sr352_set_ae_awb_lock(s_ctrl, 0);
+						msleep(100);
+					}
+					if(sr352_ctrl.prev_mode == CAMERA_MODE_INIT)
+					{
+						msleep(100);
 					}
 				}
 				break;
@@ -592,9 +674,9 @@ int32_t sr352_sensor_config(struct msm_sensor_ctrl_t *s_ctrl,
 			case  CAMERA_MODE_PREVIEW:
 			{
 				CDBG(" CFG_SET_START_STREAM: Preview");
-				sr352_set_scene_mode(s_ctrl, sr352_ctrl.settings.scenemode);
 				if(sr352_ctrl.prev_mode != CAMERA_MODE_CAPTURE)
 				{
+					sr352_set_scene_mode(s_ctrl, sr352_ctrl.settings.scenemode);
 					sr352_set_exposure_compensation(s_ctrl, sr352_ctrl.settings.exposure);
 					sr352_set_effect(s_ctrl , sr352_ctrl.settings.effect);
 					sr352_set_white_balance(s_ctrl , sr352_ctrl.settings.wb);

@@ -1,7 +1,34 @@
 /*
- *  inode.c
- * empty comment
+ * fs/scfs/inode.c
+ *
+ * Copyright (C) 2014 Samsung Electronics Co., Ltd.
+ *   Authors: Jongmin Kim <jm45.kim@samsung.com>
+ *            Sangwoo Lee <sangwoo2.lee@samsung.com>
+ *            Inbae Lee   <inbae.lee@samsung.com>
+ *
+ * This program has been developed as a stackable file system based on
+ * the WrapFS, which was written by:
+ *
+ * Copyright (C) 1997-2003 Erez Zadok
+ * Copyright (C) 2001-2003 Stony Brook University
+ * Copyright (C) 2004-2006 International Business Machines Corp.
+ *   Author(s): Michael A. Halcrow <mahalcro@us.ibm.com>
+ *              Michael C. Thompson <mcthomps@us.ibm.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+
 
 #include <linux/dcache.h>
 #include <linux/xattr.h>
@@ -199,8 +226,13 @@ scfs_do_create(struct inode *parent_inode,
 		inode = ERR_CAST(lower_parent_dentry);
 		goto out;
 	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
+	ret = vfs_create(lower_parent_dentry->d_inode, lower_file_dentry,
+			mode, true);
+#else
 	ret = vfs_create(lower_parent_dentry->d_inode, lower_file_dentry,
 			mode, NULL);
+#endif
 	if (ret) {
 		SCFS_PRINT_ERROR("error in vfs_create, lower create, ret : %d\n", ret);
 		inode = ERR_PTR(ret);
@@ -338,7 +370,7 @@ static int scfs_create(struct inode *parent_inode, struct dentry *scfs_dentry,
 	
 	scfs_inode = scfs_do_create(parent_inode, scfs_dentry, mode);
 	
-	if (!scfs_inode) {
+	if (IS_ERR(scfs_inode)) {
 		SCFS_PRINT_ERROR("file %s error in do_create\n",
 			scfs_dentry->d_name.name);
 		return PTR_ERR(scfs_inode);
@@ -384,12 +416,8 @@ int scfs_footer_read(struct dentry *dentry, struct inode *inode)
 	lower_file = sii->lower_file;
 	lower_file_size = i_size_read(lower_file->f_mapping->host);
 	offset = lower_file_size - CF_SIZE;
-	if (offset < 0) {
-		SCFS_PRINT_ERROR("f:%s lower file size wasn't bigger than "
-			"footer size, i_size was %lld\n",
-			dentry->d_name.name, lower_file_size);
-		ASSERT(0);
-	}
+	ASSERT(offset >= 0);
+
 	ret = scfs_lower_read(lower_file, (char *)&cf, CF_SIZE, &offset);
 	if (ret < 0) {
 		SCFS_PRINT_ERROR("f:%s read comp_footer error, %d \n",
@@ -456,10 +484,10 @@ static int scfs_lookup_interpose(struct dentry *dentry, struct dentry *lower_den
 			d_drop(dentry);
 			return SCFS_ERR_OUT_OF_MEMORY;
 		}
-	}
 #if SCFS_PROFILE_MEM
-	atomic_add(sizeof(struct scfs_dentry_info), &sbi->kmcache_size);
+		atomic_add(sizeof(struct scfs_dentry_info), &sbi->kmcache_size);
 #endif
+	}
 
 	scfs_set_lower_dentry(dentry, lower_dentry);
 	scfs_set_dentry_lower_mnt(dentry, lower_mnt);
@@ -478,8 +506,11 @@ static int scfs_lookup_interpose(struct dentry *dentry, struct dentry *lower_den
 		// it'll be done by scfs_footer_read func.
 		ret = scfs_footer_read(dentry, inode);
 		if (ret) {
-			make_bad_inode(inode);
-			return ret;
+			/* give a chance to handle the problem in loading meta */
+			SCFS_PRINT_ERROR("error in loading footer, ret : %d\n", ret);
+			//make_bad_inode(inode);
+			make_meta_invalid(SCFS_I(inode));
+			ret = SCFS_SUCCESS;
 		}
 	}
 	else

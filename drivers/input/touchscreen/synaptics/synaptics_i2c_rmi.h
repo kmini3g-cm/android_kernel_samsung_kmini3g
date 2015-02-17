@@ -47,6 +47,13 @@
 #define REDUCE_I2C_DATA_LENGTH
 #define USE_SENSOR_SLEEP
 
+#define	TSP_IRQ_TYPE_LEVEL	IRQF_TRIGGER_LOW | IRQF_ONESHOT
+#define	TSP_IRQ_TYPE_EDGE	IRQF_TRIGGER_FALLING
+
+#if defined(CONFIG_SEC_HESTIA_PROJECT)
+#undef TSP_BOOSTER /* Temporarily diabling TOUCH BOOSTER for Hestia */
+#endif
+
 #if defined(CONFIG_SEC_MONDRIAN_PROJECT)
 #define TOUCHKEY_ENABLE
 #define USE_RECENT_TOUCHKEY
@@ -54,6 +61,12 @@
 #define EDGE_SWIPE
 #define TKEY_BOOSTER
 #define SYNAPTICS_DEVICE_NAME	"T320"
+#define USE_PALM_REJECTION_KERNEL
+
+#elif defined(CONFIG_SEC_CHAGALL_PROJECT)
+#define PROXIMITY
+#define EDGE_SWIPE
+#define SYNAPTICS_DEVICE_NAME	"T807"
 #define USE_PALM_REJECTION_KERNEL
 
 #elif defined(CONFIG_SEC_K_PROJECT)
@@ -86,6 +99,21 @@
 #define USE_DETECTION_FLAG2
 #define USE_EDGE_EXCLUSION
 
+#elif defined(CONFIG_SEC_KSPORTS_PROJECT)
+#define PROXIMITY
+#define EDGE_SWIPE
+#define SIDE_TOUCH
+#define USE_HOVER_REZERO
+#define GLOVE_MODE
+#define USE_SHUTDOWN_CB
+#define CHECK_BASE_FIRMWARE
+#define USE_ACTIVE_REPORT_RATE
+#define USE_F51_OFFSET_CALCULATE
+#define SYNAPTICS_DEVICE_NAME	"G860"
+#define USE_STYLUS
+#define USE_DETECTION_FLAG2
+#define USE_EDGE_EXCLUSION
+
 #elif defined(CONFIG_SEC_H_PROJECT)
 #define PROXIMITY
 #define EDGE_SWIPE
@@ -109,6 +137,14 @@
 #define USE_PALM_REJECTION_KERNEL
 #define USE_EDGE_EXCLUSION
 #define USE_EDGE_SWIPE_WIDTH_MAJOR
+
+#elif defined(CONFIG_SEC_GNOTE_PROJECT)
+#define REPORT_ANGLE
+#define SYNAPTICS_DEVICE_NAME	"S5006"
+#define USE_PALM_REJECTION_KERNEL
+#define USE_EDGE_EXCLUSION
+#define USE_EDGE_SWIPE_WIDTH_MAJOR
+#undef TSP_BOOSTER     ///// temp code for new model setup
 
 #else /* default undefine all */
 #undef PROXIMITY			/* Use F51 - edge_swipe, hover, side_touch, stylus, hand_grip */
@@ -178,6 +214,8 @@
 #define SYNAPTICS_PRODUCT_ID_S5700	4
 #define SYNAPTICS_PRODUCT_ID_S5707	5
 #define SYNAPTICS_PRODUCT_ID_S5708	6
+#define SYNAPTICS_PRODUCT_ID_S5006	7
+#define SYNAPTICS_PRODUCT_ID_S5710	8
 
 #define SYNAPTICS_IC_REVISION_NONE	0x00
 #define SYNAPTICS_IC_REVISION_A0	0xA0
@@ -200,10 +238,16 @@
 #define FW_IMAGE_NAME_S5050_H		"tsp_synaptics/synaptics_s5050_h.fw"
 #define FW_IMAGE_NAME_S5100_K_A2_FHD	"tsp_synaptics/synaptics_s5100_k_a2_fhd.fw"
 #define FW_IMAGE_NAME_S5100_K_A3	"tsp_synaptics/synaptics_s5100_k_a3.fw"
+#define FW_IMAGE_NAME_S5100_K_ACTIVE	"tsp_synaptics/synaptics_s5100_k_active.fw"
+#define FW_IMAGE_NAME_S5100_HESTIA	"tsp_synaptics/synaptics_s5100_hestia.fw"
 #define FW_IMAGE_NAME_S5707		"tsp_synaptics/synaptics_s5707.fw"
+#define FW_IMAGE_NAME_S5707_KLIMT	"tsp_synaptics/synaptics_s5707_klimt.fw"
 #define FW_IMAGE_NAME_S5708		"tsp_synaptics/synaptics_s5708.fw"
 #define FW_IMAGE_NAME_S5050		"tsp_synaptics/synaptics_s5050.fw"
 #define FW_IMAGE_NAME_S5050_F		"tsp_synaptics/synaptics_s5050_f.fw"
+#define FW_IMAGE_NAME_S5006		"tsp_synaptics/synaptics_s5006.fw"
+#define FW_IMAGE_NAME_S5710		"tsp_synaptics/synaptics_chagall_5710.fw"
+
 
 #define SYNAPTICS_FACTORY_TEST_PASS	2
 #define SYNAPTICS_FACTORY_TEST_FAIL	1
@@ -361,7 +405,7 @@
 
 #ifdef EDGE_SWIPE
 
-#if defined(CONFIG_SEC_MONDRIAN_PROJECT)
+#if defined(CONFIG_SEC_MONDRIAN_PROJECT) || defined(CONFIG_SEC_CHAGALL_PROJECT)
 #define EDGE_SWIPE_DATA_OFFSET	3
 #else
 #define EDGE_SWIPE_DATA_OFFSET	9
@@ -955,6 +999,7 @@ struct synaptics_rmi_f1a_button_map {
  * @ sub_pmic : sensor power supply : 3.3V, enabled by subp_mic MAX77826
  * @ irq_gpio : interrupt GPIO PIN defined device tree files(dtsi)
  * @ project : project name string for Firmware name
+ * @ sub-project : project name string for Firmware name by sub project
  */
 
 struct synaptics_rmi4_device_tree_data {
@@ -967,7 +1012,7 @@ struct synaptics_rmi4_device_tree_data {
 	int irq_gpio;
 	int reset_gpio;
 	int id_gpio;
-
+	bool tablet;
 	char swap_axes;
 	char x_flip;
 	char y_flip;
@@ -975,6 +1020,7 @@ struct synaptics_rmi4_device_tree_data {
 	struct synaptics_rmi_f1a_button_map *f1a_button_map;
 
 	const char *project;
+	const char *sub_project;
 
 	int num_of_supply;
 	const char **name_of_supply;

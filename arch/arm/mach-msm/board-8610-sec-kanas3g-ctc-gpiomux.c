@@ -41,11 +41,26 @@ static struct gpiomux_setting gpio_spi_config[]  = {
 	},
 };
 //zyk for 86
+#if defined (CONFIG_MACH_CS02_SWA) || defined(CONFIG_MACH_CS02VE_ZC) || defined(CONFIG_MACH_CS02VE_ZM)
 static struct gpiomux_setting gpio_i2c_config = {
 	.func = GPIOMUX_FUNC_GPIO,
 	.drv  = GPIOMUX_DRV_2MA,
 	.pull = GPIOMUX_PULL_NONE,
 };
+#else
+static struct gpiomux_setting sensor_i2c_qup_cfg = {
+	.func = GPIOMUX_FUNC_3,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_NONE,
+};
+
+static struct gpiomux_setting sensor_i2c_qup_suspend_cfg = {
+	.func = GPIOMUX_FUNC_3,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_NONE,
+	.dir = GPIOMUX_IN,
+};
+#endif
 //zyk for 10,11
 /*static struct gpiomux_setting gpio_cam_i2c_config = {
 	.func = GPIOMUX_FUNC_1,
@@ -223,13 +238,6 @@ static struct msm_gpiomux_config msm_lcd_configs[] __initdata = {
 		},
 	},
 	{
-		.gpio = 7,
-		.settings = {
-			[GPIOMUX_ACTIVE]    = &lcd_en_act_cfg,
-			[GPIOMUX_SUSPENDED] = &lcd_en_sus_cfg,
-		},
-	},
-	{
 		.gpio = 78,
 		.settings = {
 			[GPIOMUX_ACTIVE]    = &lcd_te_act_config,
@@ -243,6 +251,13 @@ static struct msm_gpiomux_config msm_lcd_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &lcd_en_sus_cfg,
 		},
 	},
+};
+
+static struct gpiomux_setting gpio_hall_ic_cfg = {
+	.func = GPIOMUX_FUNC_GPIO,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_NONE,
+	.dir = GPIOMUX_IN,
 };
 
 static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
@@ -285,23 +300,23 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 	{
 		.gpio      = 10,	/* BLSP1 QUP3 I2C_SDA */
 		.settings = {
-			[GPIOMUX_ACTIVE]    = &gpio_suspend_config[0],
-			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,//zyk for 10,11
+			[GPIOMUX_ACTIVE]    = &sensor_i2c_qup_cfg,
+			[GPIOMUX_SUSPENDED] = &sensor_i2c_qup_suspend_cfg,//zyk for 10,11
 		},
 	},
 	{
 		.gpio      = 11,	/* BLSP1 QUP3 I2C_SCL */
 		.settings = {
-			[GPIOMUX_ACTIVE]    = &gpio_suspend_config[0],
-			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,
+			[GPIOMUX_ACTIVE]    = &sensor_i2c_qup_cfg,
+			[GPIOMUX_SUSPENDED] = &sensor_i2c_qup_suspend_cfg,
 		},
 	},
 #endif
 	{
 		.gpio      = 76,	/* HALL IC */
 		.settings = {
-			[GPIOMUX_ACTIVE]    = &atmel_int_act_cfg,
-			[GPIOMUX_SUSPENDED] = &atmel_int_sus_cfg,
+			[GPIOMUX_ACTIVE]    = &gpio_hall_ic_cfg,
+			[GPIOMUX_SUSPENDED] = &gpio_hall_ic_cfg,
 		},
 	},
 	//{
@@ -310,6 +325,30 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		//	[GPIOMUX_SUSPENDED] = &gpio_cam_i2c_config,
 		//},
 	//},
+};
+
+static struct gpiomux_setting nfc_i2c_config = {
+	.func = GPIOMUX_FUNC_GPIO,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_NONE,
+	.dir = GPIOMUX_IN,
+};
+
+static struct msm_gpiomux_config nfc_i2c_gpio_config[] __initdata = {
+	{
+		.gpio = 6,
+		.settings = {
+			[GPIOMUX_ACTIVE]    = &nfc_i2c_config,
+			[GPIOMUX_SUSPENDED] = &nfc_i2c_config,
+		},
+	},
+	{
+		.gpio = 7,
+		.settings = {
+			[GPIOMUX_ACTIVE]    = &nfc_i2c_config,
+			[GPIOMUX_SUSPENDED] = &nfc_i2c_config,
+		},
+	},
 };
 
 static struct msm_gpiomux_config msm_atmel_configs[] __initdata = {
@@ -488,13 +527,6 @@ static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 		.settings = {
 			[GPIOMUX_ACTIVE]    = &gpio_nc_act_cfg,
 			[GPIOMUX_SUSPENDED] = &gpio_nc_sus_cfg, //zyk for 14
-		},
-	},
-	{
-		.gpio = 7, /* rev02 nc*/
-		.settings = {
-			[GPIOMUX_ACTIVE]    = &gpio_nc_act_cfg,
-			[GPIOMUX_SUSPENDED] = &gpio_nc_sus_cfg, //zyk for 7
 		},
 	},
 	{
@@ -679,83 +711,6 @@ static struct msm_gpiomux_config mot_en[] __initdata = {
 	},
 };//zyk for 85
 
-#if defined(CONFIG_NFC_PN547)
-static struct gpiomux_setting nfc_gpio_i2c_config = {
-	.func = GPIOMUX_FUNC_GPIO,
-	//.func = GPIOMUX_FUNC_4,
-	.drv = GPIOMUX_DRV_2MA,
-	.pull = GPIOMUX_PULL_NONE,
-};
-
-static struct gpiomux_setting nfc_ven_cfg = {
-	.func = GPIOMUX_FUNC_GPIO,
-	.drv = GPIOMUX_DRV_2MA,
-	.pull = GPIOMUX_PULL_DOWN,
-	.dir = GPIOMUX_OUT_LOW,
-};
-
-static struct gpiomux_setting nfc_irq_cfg = {
-	.func = GPIOMUX_FUNC_GPIO,
-	.drv = GPIOMUX_DRV_2MA,
-	.pull = GPIOMUX_PULL_DOWN,
-	.dir = GPIOMUX_IN,
-};
-
-static struct gpiomux_setting nfc_firmware_cfg = {
-	.func = GPIOMUX_FUNC_GPIO,
-	.drv = GPIOMUX_DRV_2MA,
-	.pull = GPIOMUX_PULL_NONE,
-	.dir = GPIOMUX_OUT_LOW,
-};
-
-static struct msm_gpiomux_config msm_nfc_configs[] __initdata = {
-
-
-	{					/*  NFC   */
-		.gpio      = 89,		/* BLSP1 QUP3 I2C_CLK */
-		.settings = {
-			[GPIOMUX_ACTIVE] = &nfc_gpio_i2c_config,
-			[GPIOMUX_SUSPENDED] = &nfc_gpio_i2c_config,
-		},
-	},
-
-	{					/*  NFC   */
-		.gpio      = 88,		/* BLSP1 QUP3 I2C_DAT */
-		.settings = {
-			[GPIOMUX_ACTIVE] = &nfc_gpio_i2c_config,
-			[GPIOMUX_SUSPENDED] = &nfc_gpio_i2c_config,
-		},
-	},
-
-	{
-		.gpio		= 90,		/* NFC VEN */
-		.settings = {
-			[GPIOMUX_ACTIVE] = &nfc_ven_cfg,
-			[GPIOMUX_SUSPENDED] = &nfc_ven_cfg,
-		},
-	},
-
-	{
-		.gpio      = 80,		/* NFC IRQ */
-		.settings = {
-			[GPIOMUX_ACTIVE] = &nfc_irq_cfg,
-			[GPIOMUX_SUSPENDED] = &nfc_irq_cfg,
-		},
-	},
-
-	{
-		.gpio		= 62,		/* NFC FIRMWARE */
-		.settings = {
-			[GPIOMUX_ACTIVE] = &nfc_firmware_cfg,
-			[GPIOMUX_SUSPENDED] = &nfc_firmware_cfg,
-		},
-	},
-
-
-};
-
-#endif
-
 
 void __init msm8610_init_gpiomux(void)
 {
@@ -787,9 +742,6 @@ void __init msm8610_init_gpiomux(void)
 	msm_gpiomux_install(msm_gpio_int_configs,
 			ARRAY_SIZE(msm_gpio_int_configs));
 	msm_gpiomux_install(muic_gpio_config, ARRAY_SIZE(muic_gpio_config));
-
-#if defined(CONFIG_NFC_PN547)
-		msm_gpiomux_install(msm_nfc_configs, ARRAY_SIZE(msm_nfc_configs));
-#endif
+    msm_gpiomux_install(nfc_i2c_gpio_config, ARRAY_SIZE(nfc_i2c_gpio_config));
 
 }

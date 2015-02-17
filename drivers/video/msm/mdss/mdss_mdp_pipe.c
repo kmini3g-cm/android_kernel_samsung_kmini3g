@@ -189,7 +189,7 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 	int rc = 0, rot_mode = 0;
 	u32 nlines, format;
 	u16 width;
-#if defined(CONFIG_SEC_MATISSE_PROJECT)
+#if defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_MILLET_PROJECT)
 	int wb_mixer = 0;
 #endif
 
@@ -247,7 +247,7 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 
 	nlines = pipe->bwc_mode ? 1 : 2;
 
-#if defined(CONFIG_SEC_MATISSE_PROJECT)
+#if defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_MILLET_PROJECT)
 	if (pipe->mixer->type == MDSS_MDP_MIXER_TYPE_WRITEBACK)
 		wb_mixer = 1;
 #endif
@@ -265,7 +265,7 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 	}
 
 	for (i = 0; i < ps.num_planes; i++) {
-#if defined(CONFIG_SEC_MATISSE_PROJECT)
+#if defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_MILLET_PROJECT)
 		if (rot_mode || wb_mixer) {
 #else
 		if (rot_mode) {

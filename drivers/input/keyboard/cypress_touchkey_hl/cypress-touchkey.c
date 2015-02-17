@@ -92,6 +92,15 @@ int tkey_gpio_i2cldo;
 int tkey_gpio_vddldo;	
 #else
 static int cypress_ldo_onoff(bool on);
+
+#if defined(TK_USE_MAX_SUBPM_CONTROL)
+struct regulator_bulk_data *cyp_supplies;
+enum {
+	CYP_IC = 0,		
+	CYP_LED,
+};
+
+#endif
 #endif
 
 extern int get_touchkey_firmware(char *version);
@@ -722,7 +731,7 @@ static ssize_t touchkey_raw_data1_show(struct device *dev,
 	struct FAC_CMD cmd = {TK_CMD_READ_RAW, 1, 0};
 	return touchkey_fac_read_data(dev, buf, &cmd);
 }
-
+#if !defined(TK_USE_RECENT)
 static ssize_t touchkey_raw_data2_show(struct device *dev,
 				       struct device_attribute *attr, char *buf)
 {
@@ -736,7 +745,7 @@ static ssize_t touchkey_raw_data3_show(struct device *dev,
 	struct FAC_CMD cmd = {TK_CMD_READ_RAW, 3, 0};
 	return touchkey_fac_read_data(dev, buf, &cmd);
 }
-
+#endif
 static ssize_t touchkey_idac0_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -750,7 +759,7 @@ static ssize_t touchkey_idac1_show(struct device *dev,
 	struct FAC_CMD cmd = {TK_CMD_READ_IDAC, 1, 0};
 	return touchkey_fac_read_data(dev, buf, &cmd);
 }
-
+#if !defined(TK_USE_RECENT)
 static ssize_t touchkey_idac2_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -764,7 +773,7 @@ static ssize_t touchkey_idac3_show(struct device *dev,
 	struct FAC_CMD cmd = {TK_CMD_READ_IDAC, 3, 0};
 	return touchkey_fac_read_data(dev, buf, &cmd);
 }
-
+#endif
 static ssize_t touchkey_threshold_show(struct device *dev,
 				       struct device_attribute *attr, char *buf)
 {
@@ -1884,8 +1893,13 @@ struct device_attribute *attr, const char *buf,
 
 static DEVICE_ATTR(brightness, S_IRUGO | S_IWUSR | S_IWGRP, NULL,
 		   touchkey_led_control);
+#ifdef TK_USE_RECENT
+static DEVICE_ATTR(touchkey_recent, S_IRUGO | S_IWUSR | S_IWGRP,
+		   touchkey_menu_show, NULL);
+#else
 static DEVICE_ATTR(touchkey_menu, S_IRUGO | S_IWUSR | S_IWGRP,
 		   touchkey_menu_show, NULL);
+#endif
 static DEVICE_ATTR(touchkey_back, S_IRUGO | S_IWUSR | S_IWGRP,
 		   touchkey_back_show, NULL);
 
@@ -1910,6 +1924,12 @@ static DEVICE_ATTR(touchkey_brightness, S_IRUGO | S_IWUSR | S_IWGRP,
 #endif
 
 #if defined(TK_HAS_AUTOCAL)
+#ifdef TK_USE_RECENT
+static DEVICE_ATTR(touchkey_recent_raw, S_IRUGO, touchkey_raw_data0_show, NULL);
+static DEVICE_ATTR(touchkey_back_raw, S_IRUGO, touchkey_raw_data1_show, NULL);
+static DEVICE_ATTR(touchkey_recent_idac, S_IRUGO, touchkey_idac0_show, NULL);
+static DEVICE_ATTR(touchkey_back_idac, S_IRUGO, touchkey_idac1_show, NULL);
+#else
 static DEVICE_ATTR(touchkey_raw_data0, S_IRUGO, touchkey_raw_data0_show, NULL);
 static DEVICE_ATTR(touchkey_raw_data1, S_IRUGO, touchkey_raw_data1_show, NULL);
 static DEVICE_ATTR(touchkey_raw_data2, S_IRUGO, touchkey_raw_data2_show, NULL);
@@ -1918,6 +1938,7 @@ static DEVICE_ATTR(touchkey_idac0, S_IRUGO, touchkey_idac0_show, NULL);
 static DEVICE_ATTR(touchkey_idac1, S_IRUGO, touchkey_idac1_show, NULL);
 static DEVICE_ATTR(touchkey_idac2, S_IRUGO, touchkey_idac2_show, NULL);
 static DEVICE_ATTR(touchkey_idac3, S_IRUGO, touchkey_idac3_show, NULL);
+#endif
 static DEVICE_ATTR(touchkey_threshold, S_IRUGO, touchkey_threshold_show, NULL);
 static DEVICE_ATTR(autocal_enable, S_IRUGO | S_IWUSR | S_IWGRP, NULL,
 		   autocalibration_enable);
@@ -1943,7 +1964,11 @@ static DEVICE_ATTR(grip_mode, S_IRUGO | S_IWUSR | S_IWGRP, touchkey_grip_mode_sh
 
 static struct attribute *touchkey_attributes[] = {
 	&dev_attr_brightness.attr,
+#ifdef TK_USE_RECENT
+	&dev_attr_touchkey_recent.attr,
+#else
 	&dev_attr_touchkey_menu.attr,
+#endif
 	&dev_attr_touchkey_back.attr,
 #if defined(TK_USE_4KEY)
 	&dev_attr_touchkey_home.attr,
@@ -1958,6 +1983,12 @@ static struct attribute *touchkey_attributes[] = {
 	&dev_attr_touchkey_brightness.attr,
 #endif
 #if defined(TK_HAS_AUTOCAL)
+#ifdef TK_USE_RECENT
+	&dev_attr_touchkey_recent_raw.attr,
+	&dev_attr_touchkey_back_raw.attr,
+	&dev_attr_touchkey_recent_idac.attr,
+	&dev_attr_touchkey_back_idac.attr,
+#else
 	&dev_attr_touchkey_raw_data0.attr,
 	&dev_attr_touchkey_raw_data1.attr,
 	&dev_attr_touchkey_raw_data2.attr,
@@ -1966,6 +1997,7 @@ static struct attribute *touchkey_attributes[] = {
 	&dev_attr_touchkey_idac1.attr,
 	&dev_attr_touchkey_idac2.attr,
 	&dev_attr_touchkey_idac3.attr,
+#endif
 	&dev_attr_touchkey_threshold.attr,
 	&dev_attr_autocal_enable.attr,
 	&dev_attr_autocal_stat.attr,
@@ -2060,7 +2092,47 @@ static int touchkey_power_on(bool on)
 	return ret;
 }
 
-#ifndef TK_USE_LDO_CONTROL
+#if defined(TK_USE_MAX_SUBPM_CONTROL)
+static int cypress_vdd_onoff(bool on, int led)	// led 3.3V is 1.
+{
+	int retval;	
+	if(on){
+		if (regulator_is_enabled(cyp_supplies[led].consumer)) {
+			pr_err("%s: %s is already enabled\n", __func__, cyp_supplies[led].supply);
+		}else {
+			retval = regulator_enable(cyp_supplies[led].consumer);
+			if (retval) {
+				pr_err("%s: Fail to enable regulator %s (%d)\n", __func__, cyp_supplies[led].supply, retval);
+			}
+			pr_err("%s: %s is enabled[OK]\n", __func__, cyp_supplies[led].supply);
+		}
+	}else{
+		if (regulator_is_enabled(cyp_supplies[led].consumer)) {
+			retval = regulator_disable(cyp_supplies[led].consumer);
+			if (retval) {
+				pr_err("%s: Fail to disable regulator %s (%d)\n",	__func__, cyp_supplies[led].supply, retval);
+			}
+			pr_err("%s: %s is disabled[OK]\n", __func__, cyp_supplies[led].supply);
+		}else {
+			pr_err("%s: %s is already disabled\n", __func__, cyp_supplies[led].supply);
+		}
+	}
+	return 1;
+}
+static int cypress_ldo_onoff(bool on)
+{
+	pr_err("%s: on:%d\n", __func__, on);
+	cypress_vdd_onoff(on, CYP_IC);
+	return 1;
+}
+static int touchkey_led_power_on(bool on)
+{
+	pr_err("%s: on:%d\n", __func__, on);
+	cypress_vdd_onoff(on, CYP_LED);
+	return 1;
+}
+
+#elif !defined(TK_USE_LDO_CONTROL)
 static int touchkey_led_power_on(bool on)
 {
 	printk(KERN_ERR "%s, on:%d %d\n", __func__,on, __LINE__);
@@ -2266,6 +2338,29 @@ static int cypress_parse_dt(struct device *dev,
 	tkey_gpio_grip = pdata->gpio_grip;
 #endif
 
+#if defined(TK_USE_MAX_SUBPM_CONTROL)
+	{
+		int rc;
+		pdata->name_of_supply = kzalloc(sizeof(char *) * 2, GFP_KERNEL);
+		rc = of_property_read_string_index(np, "cypress,supply-name", 0, &pdata->name_of_supply[0]);
+		if (rc && (rc != -EINVAL)) {
+			printk(KERN_INFO "%s: Unable to read %s\n", __func__,"cypress,supply-name 0");
+			return rc;
+		}
+		rc = of_property_read_string_index(np, "cypress,supply-name", 1, &pdata->name_of_supply[1]);
+		if (rc && (rc != -EINVAL)) {
+			printk(KERN_INFO "%s: Unable to read %s\n", __func__,"cypress,supply-name 1");
+			return rc;
+		}
+		dev_info(dev, "%s: supply: %s, %s\n", __func__, pdata->name_of_supply[0],pdata->name_of_supply[1]);
+	}
+	
+#endif
+
+#if defined(CONFIG_SEC_S_PROJECT)
+	touchkey_keycode[1] = KEY_RECENT;
+#endif
+
 	return 0;
 }
 #endif
@@ -2321,6 +2416,33 @@ static int i2c_touchkey_probe(struct i2c_client *client,
 	pdata->rst_reset = touchkey_rst_reset;
 #endif
 	
+#if defined(TK_USE_MAX_SUBPM_CONTROL)
+	cyp_supplies = kzalloc(sizeof(struct regulator_bulk_data) * 2, GFP_KERNEL);
+	if (!cyp_supplies) {
+		pr_err("%s: Failed to alloc mem for supplies\n", __func__);
+		ret = -ENOMEM;
+
+		goto err_register_device;
+	}
+	cyp_supplies[0].supply = pdata->name_of_supply[0];	// 1.8V, IC
+	cyp_supplies[1].supply = pdata->name_of_supply[1];	// 3.3V, LED
+	
+	ret = regulator_bulk_get(&client->dev, 2, cyp_supplies);
+	if (ret)
+		goto err_get_regulator;
+
+
+	ret = regulator_set_voltage(cyp_supplies[CYP_IC].consumer,1950000, 1950000);
+	if (ret) pr_err("%s, 1.8 set_vtg failed rc=%d\n", __func__, ret);
+	
+	ret = regulator_set_voltage(cyp_supplies[CYP_LED].consumer,3300000, 3300000);
+	if (ret) pr_err("%s, 3.3 set_vtg failed rc=%d\n", __func__, ret);
+
+
+	pr_err("%s: Max77826 supplies was seted \n", __func__);
+#endif
+
+
 	touchkey_init_hw();
 	client->irq = gpio_to_irq(tkey_gpio_int);
 	irq_set_irq_type(gpio_to_irq(tkey_gpio_int), IRQF_TRIGGER_FALLING);
@@ -2516,6 +2638,10 @@ err_device_create:
 	tkey_i2c->pdata->power_on(0);
 	input_unregister_device(input_dev);
 	input_dev = NULL;
+#if defined(TK_USE_MAX_SUBPM_CONTROL)
+err_get_regulator:
+	kfree(cyp_supplies);
+#endif	
 err_register_device:
 	wake_lock_destroy(&tkey_i2c->fw_wakelock);
 	mutex_destroy(&tkey_i2c->lock);
@@ -2532,9 +2658,7 @@ void touchkey_shutdown(struct i2c_client *client)
 {
 	struct touchkey_i2c *tkey_i2c = i2c_get_clientdata(client);
 
-	tkey_i2c->pdata->power_on(0);
-	tkey_i2c->pdata->led_power_on(0);
-
+	touchkey_stop(tkey_i2c);
 	printk(KERN_DEBUG"touchkey:%s\n", __func__);
 }
 

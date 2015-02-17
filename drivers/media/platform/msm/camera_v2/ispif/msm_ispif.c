@@ -40,7 +40,12 @@
 #define ISPIF_INTF_CMD_DISABLE_IMMEDIATELY    0x02
 
 #define ISPIF_TIMEOUT_SLEEP_US                1000
+#if defined(CONFIG_MACH_VICTORLTE_CTC) || defined(CONFIG_MACH_AFYONLTE_TMO) \
+	|| defined (CONFIG_MACH_AFYONLTE_MTR)
+#define ISPIF_TIMEOUT_ALL_US                1000000
+#else
 #define ISPIF_TIMEOUT_ALL_US                500000
+#endif
 
 #define CSID_VERSION_V30 0x30000000
 

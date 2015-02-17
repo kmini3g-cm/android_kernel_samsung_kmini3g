@@ -157,7 +157,7 @@ obj-$(CONFIG_FELICA) 		+= felica/
 
 obj-$(CONFIG_SENSORS_SSP)	+= sensorhub/
 obj-$(CONFIG_SENSORS_FINGERPRINT)	+= fingerprint/
-
+obj-$(CONFIG_ADSP_FACTORY)      += adsp_factory/
 obj-$(CONFIG_EXTCON)		+= extcon/
 obj-$(CONFIG_IR_REMOCON_MC96FR116)	+= irda/
 obj-$(CONFIG_IRDA_COMMON_LDO)	+= irda/

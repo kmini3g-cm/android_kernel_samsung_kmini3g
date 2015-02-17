@@ -702,7 +702,7 @@ power_attr(cpufreq_max_limit);
 power_attr(cpufreq_min_limit);
 
 struct cpufreq_limit_handle *cpufreq_min_touch;
-
+struct cpufreq_limit_handle *cpufreq_min_camera;
 
 int set_freq_limit(unsigned long id, unsigned int freq)
 {
@@ -715,6 +715,11 @@ int set_freq_limit(unsigned long id, unsigned int freq)
 		cpufreq_min_touch = NULL;
 	}
 
+	if (cpufreq_min_camera) {
+		cpufreq_limit_put(cpufreq_min_camera);
+		cpufreq_min_camera = NULL;
+	}
+
 	pr_debug("%s: id=%d freq=%d\n", __func__, (int)id, freq);
 
 	/* min lock */
@@ -722,6 +727,16 @@ int set_freq_limit(unsigned long id, unsigned int freq)
 		if (freq != -1) {
 			cpufreq_min_touch = cpufreq_limit_min_freq(freq, "touch min");
 			if (IS_ERR(cpufreq_min_touch)) {
+				pr_err("%s: fail to get the handle\n", __func__);
+				goto out;
+			}
+		}
+	}
+
+	if (id & DVFS_CAMERA_ID) {
+		if (freq != -1) {
+			cpufreq_min_camera = cpufreq_limit_min_freq(freq, "camera min");
+			if (IS_ERR(cpufreq_min_camera)) {
 				pr_err("%s: fail to get the handle\n", __func__);
 				goto out;
 			}

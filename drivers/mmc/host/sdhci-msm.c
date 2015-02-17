@@ -314,7 +314,7 @@ struct sdhci_msm_pltfm_data {
 	struct sdhci_msm_pin_data *pin_data;
 	u32 cpu_dma_latency_us;
 	int status_gpio; /* card detection GPIO that is configured as IRQ */
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
+#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
 	int ls_gpio; /* level shifter gpio */
 #endif
 	struct sdhci_msm_bus_voting_data *voting_data;
@@ -1412,7 +1412,7 @@ static struct sdhci_msm_pltfm_data *sdhci_msm_populate_pdata(struct device *dev)
 	pdata->status_gpio = of_get_named_gpio_flags(np, "cd-gpios", 0, &flags);
 	if (gpio_is_valid(pdata->status_gpio) & !(flags & OF_GPIO_ACTIVE_LOW))
 		pdata->caps2 |= MMC_CAP2_CD_ACTIVE_HIGH;
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
+#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
 	pdata->ls_gpio = of_get_named_gpio_flags(np, "ls-gpios", 0, 0);
 #endif
 
@@ -1949,7 +1949,7 @@ static int sdhci_msm_setup_vreg(struct sdhci_msm_pltfm_data *pdata,
 		}
 	}
 
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
+#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
 	if(pdata->ls_gpio > 0 && gpio_is_valid(pdata->ls_gpio)) {
 		if(enable) {
 			gpio_set_value(pdata->ls_gpio, 1);
@@ -2853,7 +2853,7 @@ static struct sdhci_ops sdhci_msm_ops = {
 	.enable_controller_clock = sdhci_msm_enable_controller_clock,
 };
 
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
+#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
 static void mmc_enable_ls_gpio(struct sdhci_host *host, unsigned int gpio_no)
 {
 	int status;
@@ -2908,10 +2908,11 @@ static void sdhci_msm_status_notify(int card_present, void *dev_id)
 	struct sdhci_host *host = (struct sdhci_host *)dev_id;
 	unsigned long flags;
 
-	host->mmc->rescan_disable=0;
-	pr_err("%s: %s: rescan_disable : %d\n",mmc_hostname(host->mmc), __func__, host->mmc->rescan_disable);
-
 	if (host) {
+		host->mmc->rescan_disable=0;
+		pr_err("%s: %s: rescan_disable : %d\n",mmc_hostname(host->mmc),
+			__func__, host->mmc->rescan_disable);
+
 		spin_lock_irqsave(&host->lock, flags);
 		if (card_present) {
 			pr_err("%s: card inserted.\n", mmc_hostname(host->mmc));
@@ -2936,12 +2937,12 @@ static ssize_t t_flash_detect_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct sdhci_msm_host *msm_host = dev_get_drvdata(dev);
-#if defined(CONFIG_MACH_SERRANO)
+#if defined(CONFIG_MACH_SERRANO) || defined(CONFIG_SEC_ATLANTIC_PROJECT)
 	if (msm_host->mmc->card) {
-		printk(KERN_DEBUG "sdcc3: card inserted.\n");
+		printk(KERN_DEBUG "External sd: card inserted.\n");
 		return sprintf(buf, "Insert\n");
 	} else {
-		printk(KERN_DEBUG "sdcc3: card removed.\n");
+		printk(KERN_DEBUG "External sd: card removed.\n");
 		return sprintf(buf, "Remove\n");
 	}
 #else
@@ -2957,10 +2958,10 @@ static ssize_t t_flash_detect_show(struct device *dev,
 
 	pr_info("%s : detect = %d.\n", __func__, detect);
 	if (!detect) {
-		printk(KERN_DEBUG "sdcc3: card inserted.\n");
+		printk(KERN_DEBUG "External sd: card inserted.\n");
 		return sprintf(buf, "Insert\n");
 	} else {
-		printk(KERN_DEBUG "sdcc3: card removed.\n");
+		printk(KERN_DEBUG "External sd: card removed.\n");
 		return sprintf(buf, "Remove\n");
 	}
 #endif
@@ -3265,7 +3266,7 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 
 	init_completion(&msm_host->pwr_irq_completion);
 
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
+#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
 	if (msm_host->pdata->ls_gpio || gpio_is_valid(msm_host->pdata->ls_gpio))
 		mmc_enable_ls_gpio(host, msm_host->pdata->ls_gpio);
 #endif
@@ -3301,8 +3302,10 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 #endif
 
 	/* SYSFS about SD Card Detection by soonil.lim */
-#if defined(CONFIG_MACH_SERANNO)
+#if defined(CONFIG_MACH_SERRANO)
 	if (t_flash_detect_dev == NULL && !strcmp(host->hw_name, "msm_sdcc.3")) {
+#elif defined(CONFIG_SEC_ATLANTIC_PROJECT)
+	if (t_flash_detect_dev == NULL && !strcmp(host->hw_name, "msm_sdcc.2")) {
 #else
 	if (t_flash_detect_dev == NULL && gpio_is_valid(msm_host->pdata->status_gpio)) {
 #endif

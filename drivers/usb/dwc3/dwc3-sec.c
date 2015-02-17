@@ -11,7 +11,7 @@
 #include <linux/host_notify.h>
 #include <linux/of_gpio.h>
 
-#ifdef CONFIG_CHARGER_BQ24260
+#if defined (CONFIG_CHARGER_BQ24260) || defined (CONFIG_CHARGER_SMB358)
 #include <linux/gpio.h>
 #include <mach/rpm-regulator-smd.h>
 #endif
@@ -22,11 +22,6 @@
 
 #if defined(CONFIG_SEC_K_PROJECT)
 	extern int sec_qcom_usb_rdrv;
-	extern void force_dwc3_gadget_disconnect(void);
-#endif
-
-#if defined(CONFIG_SEC_KACTIVE_PROJECT)
-	extern void force_dwc3_gadget_disconnect(void);
 #endif
 
 struct dwc3_sec {
@@ -119,7 +114,7 @@ static void usb_vbus_msm_init(struct dwc3_msm *dwcm, struct usb_phy *phy)
 }
 #endif
 
-#ifdef CONFIG_CHARGER_BQ24260
+#if defined (CONFIG_CHARGER_BQ24260) || defined (CONFIG_CHARGER_SMB358)
 struct delayed_work	bq24260_late_power_work;
 int bq24260_otg_control(int enable)
 {
@@ -410,6 +405,7 @@ static struct sec_cable support_cable_list[] = {
 	{ .cable_type = EXTCON_SMARTDOCK_TA, },
 	{ .cable_type = EXTCON_SMARTDOCK_USB, },
 	{ .cable_type = EXTCON_JIG_USBON, },
+	{ .cable_type = EXTCON_CHARGE_DOWNSTREAM, },
 };
 
 #ifdef CONFIG_USB_HOST_NOTIFY
@@ -428,18 +424,8 @@ static void sec_usb_work(int usb_mode)
 		sec_qcom_usb_rdrv,
 		usb_mode);
 	if(!usb_mode)
-	{
 /* USB3.0 Popup option */
 		usb30en = 0;
-#if !defined(CONFIG_SEC_LOCALE_CHN)
-		force_dwc3_gadget_disconnect();
-#endif
-	}
-#endif
-
-#if defined(CONFIG_SEC_KACTIVE_PROJECT)
-	if(!usb_mode)
-		force_dwc3_gadget_disconnect();
 #endif
 
 	psy = power_supply_get_by_name("dwc-usb");
@@ -462,12 +448,13 @@ static void sec_cable_event_worker(struct work_struct *work)
 	case EXTCON_USB:
 	case EXTCON_SMARTDOCK_USB:
 	case EXTCON_JIG_USBON:
+	case EXTCON_CHARGE_DOWNSTREAM:
 		sec_usb_work(cable->cable_state);
 		break;
-	case EXTCON_USB_HOST: 
+	case EXTCON_USB_HOST:
 		if (cable->cable_state)
 			sec_otg_notify(HNOTIFY_ID);
-		else	
+		else
 			sec_otg_notify(HNOTIFY_ID_PULL);
 		break;
 	case EXTCON_TA: break;
@@ -546,7 +533,7 @@ static int sec_otg_init(struct dwc3_msm *dwcm, struct usb_phy *phy)
 	sec_noti.nb.notifier_call = sec_otg_notifications;
 	sec_noti.dwcm = dwcm;
 
-#if defined (CONFIG_CHARGER_BQ24260) || defined (CONFIG_CHARGER_SMB1357)
+#if defined (CONFIG_CHARGER_BQ24260) || defined (CONFIG_CHARGER_SMB358) || defined (CONFIG_CHARGER_SMB1357)
 	usb_vbus_msm_init(dwcm, phy);
 #endif
 

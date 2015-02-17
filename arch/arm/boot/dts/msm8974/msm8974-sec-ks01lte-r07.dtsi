@@ -301,6 +301,8 @@
 			reg = <0x20>;
 			interrupt-parent = <&msmgpio>;
 			interrupts = <80 0>;
+			qcom,noise-rjct-scl = <1>;
+			qcom,noise-rjct-sda = <1>;
 			synaptics,tsppwr_en = <&pm8941_gpios 9 0x1>;
 			synaptics,irq-gpio = <&msmgpio 80 0x00>;
 			synaptics,i2c-pull-up = <1>;

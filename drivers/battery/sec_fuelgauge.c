@@ -373,6 +373,9 @@ static int fuelgauge_parse_dt(struct device *dev,
 			struct sec_fuelgauge_info *fuelgauge)
 {
 	struct device_node *np = dev->of_node;
+#if !defined(CONFIG_FUELGAUGE_MAX17050)
+	struct device_node *bnp = of_find_node_by_name(NULL, "battery");
+#endif
 	sec_battery_platform_data_t *pdata = fuelgauge->pdata;
 	int ret;
 #if 0
@@ -425,6 +428,15 @@ static int fuelgauge_parse_dt(struct device *dev,
 				pdata->fuel_alert_soc, pdata->repeated_fuelalert, pdata->jig_irq);
 
 #else
+		pdata->charger_name = "sec-charger";
+		if (bnp == NULL) {
+			pr_err("%s bnp NULL, Forced set to sec-charger\n", __func__);
+		} else {
+			ret = of_property_read_string(bnp,
+				"battery,charger_name", (char const **)&pdata->charger_name);
+			if (ret)
+				pr_info("%s: Vendor is Empty. Forced set to sec-charger\n", __func__);
+		}
 		ret = of_get_named_gpio(np, "fuelgauge,fuel_int", 0);
 		if (ret > 0) {
 			pdata->fg_irq = ret;

@@ -1,5 +1,32 @@
 /*
- *  scfs.h
+ * fs/scfs/scfs.h
+ *
+ * Copyright (C) 2014 Samsung Electronics Co., Ltd.
+ *   Authors: Jongmin Kim <jm45.kim@samsung.com>
+ *            Sangwoo Lee <sangwoo2.lee@samsung.com>
+ *            Inbae Lee   <inbae.lee@samsung.com>
+ *
+ * This program has been developed as a stackable file system based on
+ * the WrapFS, which was written by:
+ *
+ * Copyright (C) 1997-2003 Erez Zadok
+ * Copyright (C) 2001-2003 Stony Brook University
+ * Copyright (C) 2004-2006 International Business Machines Corp.
+ *   Author(s): Michael A. Halcrow <mahalcro@us.ibm.com>
+ *              Michael C. Thompson <mcthomps@us.ibm.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #ifndef SCFS_HEADER_H
@@ -18,7 +45,7 @@
 #include <linux/time.h>
 #include <linux/mempool.h>
 #include <linux/version.h>
-
+#include <linux/debugfs.h>
 
 extern const struct address_space_operations scfs_aops;
 extern const struct inode_operations scfs_symlink_iops;
@@ -72,9 +99,10 @@ extern struct kmem_cache *scfs_xattr_cache;
 #define SCFS_CLUSTER_SIZE_MAX	(16 * 1024)
 #define SCFS_CLUSTER_SIZE_MIN	(4 * 1024)
 /* file status flags */
-#define SCFS_DATA_RAW		0x00000001
-#define SCFS_DATA_COMPRESS	0x00000002
-#define SCFS_META_XATTR		0x00000004
+#define SCFS_DATA_RAW			0x00000001
+#define SCFS_DATA_COMPRESS		0x00000002
+#define SCFS_META_XATTR			0x00000004
+#define SCFS_CINFO_OVER_PAGESIZE	0x00000008
 
 #define SCFS_INVALID_META	0x00000010
 /* error return code */
@@ -97,7 +125,39 @@ extern struct kmem_cache *scfs_xattr_cache;
 /* misc */
 #define SCFS_IO_MAX_RETRY	10
 #define IS_POW2(n)		(n != 0 && ((n & (n - 1)) == 0))
+/* read performance tuning stuff */
+#define MAX_BUFFER_CACHE	4
+#define SCFS_ASYNC_READ_PAGES
+#define SCFS_READ_PAGES_PROFILE
+#define SCFS_NOTIFY_RANDOM_READ
 
+#define SCFS_SEQUENTIAL_PAGE_NUM	8
+
+enum scfs_mode {
+	SM_LowInval,		/* Lower page cache invalidation */
+	__NR_SCFSMODE,
+};
+
+#ifdef SCFS_ASYNC_READ_PAGES
+/* max buffer size (in page) */
+#define MAX_PAGE_BUFFER_SIZE_SMB	8192
+
+/* vnswap_mb_thread wakeup threshold : 2 ~ 4 smb_thread each in order */
+#define SMB_THREAD_THRESHOLD_2	MAX_PAGE_BUFFER_SIZE_SMB / 256	// 8*4 pages
+#define SMB_THREAD_THRESHOLD_3	MAX_PAGE_BUFFER_SIZE_SMB / 128 	// 16*4 pages
+#define SMB_THREAD_THRESHOLD_4	MAX_PAGE_BUFFER_SIZE_SMB / 64 	// 32*4 pages
+
+extern u64 scfs_readpage_total_count;
+extern u64 scfs_readpage_io_count;
+extern u64 scfs_lowerpage_total_count;
+extern u64 scfs_lowerpage_reclaim_count;
+extern u64 scfs_op_mode;
+extern u64 scfs_sequential_page_number;
+extern struct task_struct *smb_task[NR_CPUS];
+
+int smb_init(void);
+int smb_thread(void *nothing);
+#endif
  
 /*******************************/
 /* compression & cluster stuff */
@@ -110,8 +170,6 @@ enum comp_type {
     FASTLZO,
     TOTAL_TYPES,
 };
- 
-
 
 struct scfs_cinfo
 {
@@ -167,6 +225,10 @@ struct scfs_sb_info
 	atomic_t time_11;
 	atomic_t time_12;
 #endif
+// To check lower available space
+	atomic_t current_file_count; // open files
+	atomic_t total_cluster_count; // total clusters will be written to lower.
+	atomic64_t current_data_size; // total data size in memory(not written)
 };
 
 struct cinfo_entry
@@ -231,8 +293,6 @@ struct scfs_open_req {
 	struct list_head kthread_ctl_list;
 };
 
-// shyoon - cluster read buffer cache
-#define MAX_BUFFER_CACHE 4
 struct read_buffer_cache {
 	struct page *u_page;
 	struct page *c_page;
@@ -478,6 +538,9 @@ int
 scfs_privileged_open(struct file **lower_file, struct dentry *lower_dentry,
 			struct vfsmount *lower_mnt, const struct cred *cred);
 
+int
+scfs_check_space(struct scfs_sb_info *sbi, struct dentry *dentry);
+
 void
 sync_page_to_buffer(struct page *page, char *buffer);
 
@@ -519,5 +582,8 @@ int scfs_reload_meta(struct file *file);
 int scfs_initialize_file(struct dentry *scfs_dentry, struct inode *scfs_inode);
 ssize_t scfs_lower_read(struct file *file, char *buf, size_t count, loff_t *pos);
 ssize_t scfs_lower_write(struct file *file, char *buf, size_t count, loff_t *pos);
+
+void *scfs_cinfo_alloc(struct scfs_inode_info *sii, unsigned long size);
+void scfs_cinfo_free(struct scfs_inode_info *sii, const void *addr);
 
 #endif //SCFS_HEADER_H

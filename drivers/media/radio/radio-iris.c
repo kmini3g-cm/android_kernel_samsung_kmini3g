@@ -4702,6 +4702,7 @@ static int __init iris_probe(struct platform_device *pdev)
 			memcpy(priv_videodev, radio->videodev,
 				sizeof(struct video_device));
 		} else {
+			mutex_destroy(&radio->lock);
 			video_unregister_device(radio->videodev);
 			video_device_release(radio->videodev);
 			for (; i > -1; i--)

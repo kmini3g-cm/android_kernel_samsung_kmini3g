@@ -961,8 +961,8 @@ static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &cam_settings[5],
 		},
 	},
-	
-#elif defined(CONFIG_MACH_AFYONLTE_TMO)
+
+#elif defined(CONFIG_MACH_AFYONLTE_TMO) || defined(CONFIG_MACH_AFYONLTE_CAN)
 	{
 		.gpio = 26, /* CAM_MCLK */
 		.settings = {
@@ -1490,7 +1490,7 @@ void __init msm8226_init_gpiomux(void)
 	msm_gpiomux_install(msm_earjack_gpio_configs, ARRAY_SIZE(msm_earjack_gpio_configs));
 #endif
 #ifdef CONFIG_SND_SOC_MAX98504
-#if defined(CONFIG_MACH_MILLETLTE_OPEN)
+#if defined(CONFIG_MACH_MILLETLTE_OPEN) || defined(CONFIG_MACH_MILLETLTE_KOR)
 				if ( system_rev >= 0 && system_rev < 3)
 #elif defined (CONFIG_MACH_MILLET3G_EUR)
 				if ( system_rev >= 2 && system_rev < 4)

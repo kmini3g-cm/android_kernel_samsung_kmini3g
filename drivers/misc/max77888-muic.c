@@ -95,6 +95,7 @@ enum {
 	ADC_DOCK_PLAY_PAUSE_KEY = 0x0d,
 	ADC_SMARTDOCK		= 0x10, /* 0x10000 40.2K ohm */
 	ADC_AUDIODOCK		= 0x12, /* 0x10010 64.9K ohm */
+	ADC_CHARGING_CABLE	= 0x14, /* 0x10100 102K ohm */
 	ADC_LANHUB		= 0x13, /* 0x10011 80.07K ohm */
 	ADC_CEA936ATYPE1_CHG	= 0x17,	/* 0x10111 200K ohm */
 	ADC_JIG_USB_OFF		= 0x18, /* 0x11000 255K ohm */
@@ -2352,6 +2353,10 @@ static int max77888_muic_handle_attach(struct max77888_muic_info *info,
 			ret = max77888_muic_set_charging_type(info, false);
 		}
 		break;
+	case ADC_CHARGING_CABLE:
+		info->cable_type = CABLE_TYPE_CHARGING_CABLE_MUIC;
+		max77888_muic_set_charging_type(info, false);
+		break;
 	case ADC_LANHUB:
 		max77888_muic_attach_dock_type(info, adc, chgtyp);
 		if(chgtyp == CHGTYP_USB ||
@@ -2598,6 +2603,11 @@ static int max77888_muic_handle_detach(struct max77888_muic_info *info, int irq)
 		mdata->jig_uart_cb(UART_PATH_AP);
 
 	switch (info->cable_type) {
+	case CABLE_TYPE_CHARGING_CABLE_MUIC:
+		dev_info(info->dev, "%s: CHARGING CABLE\n", __func__);
+		info->cable_type = CABLE_TYPE_NONE_MUIC;
+		max77888_muic_set_charging_type(info, true);
+		break;
 	case CABLE_TYPE_OTG_MUIC:
 		dev_info(info->dev, "%s: OTG\n", __func__);
 		info->cable_type = CABLE_TYPE_NONE_MUIC;
@@ -2871,6 +2881,7 @@ static int max77888_muic_filter_dev(struct max77888_muic_info *info,
 				 chgtyp == CHGTYP_1A) {
 				switch (info->cable_type) {
 				case CABLE_TYPE_OTG_MUIC:
+				case CABLE_TYPE_CHARGING_CABLE_MUIC:
 				case CABLE_TYPE_DESKDOCK_MUIC:
 				case CABLE_TYPE_CARDOCK_MUIC:
 				case CABLE_TYPE_LANHUB_MUIC:

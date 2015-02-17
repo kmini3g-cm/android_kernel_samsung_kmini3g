@@ -628,7 +628,8 @@ int msm_camera_get_dt_power_off_setting_data(struct device_node *of_node,
 			else if (!strcmp(seq_name, "sensor_gpio_ext_vio_power"))
 				ps[i].seq_val = SENSOR_GPIO_EXT_VIO_POWER;
 #if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT) \
-	|| defined(CONFIG_MACH_AFYONLTE_TMO)
+	|| defined(CONFIG_MACH_AFYONLTE_TMO) || defined(CONFIG_MACH_AFYONLTE_CAN) || defined(CONFIG_SEC_DEGAS_PROJECT) \
+	|| defined (CONFIG_SEC_T8_PROJECT) || defined (CONFIG_SEC_T10_PROJECT) || defined (CONFIG_MACH_AFYONLTE_MTR)
 			else if (!strcmp(seq_name, "sensor_gpio_ext_camio_en"))
 				ps[i].seq_val = SENSOR_GPIO_EXT_CAMIO_EN;
 
@@ -1360,7 +1361,9 @@ int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 				power_setting->seq_type);
 			break;
 		}
-#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT)
+#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT) \
+	|| defined(CONFIG_SEC_DEGAS_PROJECT) || defined (CONFIG_SEC_T8_PROJECT) \
+	|| defined (CONFIG_SEC_T10_PROJECT)
 		if (power_setting->delay) {
 			usleep_range(power_setting->delay * 100,
 				(power_setting->delay * 100) + 100);
@@ -1451,7 +1454,9 @@ power_up_failed:
 				power_setting->seq_type);
 			break;
 		}
-#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT)
+#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT) \
+	|| defined(CONFIG_SEC_DEGAS_PROJECT) || defined (CONFIG_SEC_T8_PROJECT) \
+	|| defined (CONFIG_SEC_T10_PROJECT)
 		if (power_setting->delay) {
 			usleep_range(power_setting->delay * 100,
 				(power_setting->delay * 100) + 100);
@@ -1577,7 +1582,9 @@ int msm_camera_power_down(struct msm_camera_power_ctrl_t *ctrl,
 				power_setting->seq_type);
 			break;
 		}
-#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT)
+#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT) \
+	|| defined(CONFIG_SEC_DEGAS_PROJECT) || defined (CONFIG_SEC_T8_PROJECT) \
+	|| defined (CONFIG_SEC_T10_PROJECT)
 		if (power_setting->delay) {
 			usleep_range(power_setting->delay * 100,
 				(power_setting->delay * 100) + 100);

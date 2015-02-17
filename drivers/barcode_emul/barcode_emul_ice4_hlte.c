@@ -192,13 +192,6 @@ static int ice4_clock_en(int onoff)
 	static struct clk *fpga_main_src_clk;
 	static struct clk *fpga_main_clk;
 #if defined(CONFIG_MACH_H3GDUOS)
-#if defined(CONFIG_MACH_H3GDUOS_CTC)
-     if (onoff) {
-	msm_tlmm_misc_reg_write(TLMM_SPARE_REG, 0x1);
-     } else {
-	msm_tlmm_misc_reg_write(TLMM_SPARE_REG, 0x5);
-     }
-#else
      if (onoff) {
 		int rc = 0;
 
@@ -217,7 +210,7 @@ static int ice4_clock_en(int onoff)
 		//msm_tlmm_misc_reg_write(TLMM_SPARE_REG, 0x5);
 		gpio_free(GPIO_FPGA_MAIN_CLK);
      }
-#endif
+
       if (!fpga_main_src_clk){
 	fpga_main_src_clk = clk_get(NULL, "gp1_src_clk");
       }
@@ -332,10 +325,6 @@ static void barcode_gpio_config(void)
 	gpio_tlmm_config(GPIO_CFG(g_pdata->spi_clk, 0,
 		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
 #if !defined(CONFIG_MACH_H3GDUOS)
-	gpio_tlmm_config(GPIO_CFG(GPIO_FPGA_MAIN_CLK, \
-		2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
-#endif
-#if defined(CONFIG_MACH_H3GDUOS_CTC)
 	gpio_tlmm_config(GPIO_CFG(GPIO_FPGA_MAIN_CLK, \
 		2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
 #endif
@@ -1243,9 +1232,10 @@ static int __devinit barcode_emul_probe(struct i2c_client *client,
 	} else
 		pdata = client->dev.platform_data;
 
-#if !defined(CONFIG_MACH_VIENNAEUR) && !defined(CONFIG_MACH_LT03EUR)\
+#if !defined(CONFIG_MACH_VIENNAEUR) && !defined(CONFIG_MACH_VIENNAKOR) && !defined(CONFIG_MACH_LT03EUR)\
 	&& !defined(CONFIG_MACH_LT03SKT) && !defined(CONFIG_MACH_LT03KTT)\
-	&& !defined(CONFIG_MACH_LT03LGT) && !defined(CONFIG_MACH_V2)
+	&& !defined(CONFIG_MACH_LT03LGT) && !defined(CONFIG_MACH_V2)\
+	&& !defined(CONFIG_MACH_CHAGALL) && !defined(CONFIG_MACH_KLIMT)
 	if(system_rev < BOARD_REV02)
 		pdata->fw_type = ICE_I2C_2;
 

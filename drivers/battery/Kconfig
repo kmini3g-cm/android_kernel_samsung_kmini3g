@@ -270,6 +270,15 @@ config CHARGER_MAX77888
           flash driver.
           You have to define MFD_MAX77888
 
+config CHARGER_SM5414
+	tristate "SM5414 charger driver"
+	default n
+	help
+	 Say Y to include support
+	 for SM5414 charger driver.
+	 This driver source code implemented
+	 all functions for SMB5414 charger.
+
 config SAMSUNG_LPM_MODE
 	bool "Off charging mode support in sec battery driver"
 	default n

@@ -917,20 +917,10 @@ void max77804k_otg_control(struct max77804k_muic_info *info, int enable)
 #if defined(CONFIG_CHARGER_SMB1357)
 void max77804k_muic_only_otg_control(struct max77804k_muic_info *info, int enable)
 {
-	u8 int_mask, cdetctrl1;
+	u8 cdetctrl1;
 	pr_info("%s: enable(%d)\n", __func__, enable);
 
 	if (enable) {
-		/* disable charger interrupt */
-		max77804k_read_reg(info->max77804k->i2c,
-			MAX77804K_CHG_REG_CHG_INT_MASK, &int_mask);
-		chg_int_state = int_mask;
-		int_mask |= (1 << 4);	/* disable chgin intr */
-		int_mask |= (1 << 6);	/* disable chg */
-		int_mask &= ~(1 << 0);	/* enable byp intr */
-		max77804k_write_reg(info->max77804k->i2c,
-			MAX77804K_CHG_REG_CHG_INT_MASK, int_mask);
-
 		/* disable charger detection */
 		max77804k_read_reg(info->max77804k->muic,
 			MAX77804K_MUIC_REG_CDETCTRL1, &cdetctrl1);
@@ -938,31 +928,15 @@ void max77804k_muic_only_otg_control(struct max77804k_muic_info *info, int enabl
 		max77804k_write_reg(info->max77804k->muic,
 			MAX77804K_MUIC_REG_CDETCTRL1, cdetctrl1);
 	} else {
-		/* [MAX77804] Workaround to get rid of reading dummy(0x00) */
-		/* disable charger detection again */
-		max77804k_read_reg(info->max77804k->muic,
-			MAX77804K_MUIC_REG_CDETCTRL1, &cdetctrl1);
-		cdetctrl1 &= ~(1 << 0);
-		max77804k_write_reg(info->max77804k->muic,
-			MAX77804K_MUIC_REG_CDETCTRL1, cdetctrl1);
-
-		mdelay(10);
 		/* enable charger detection */
 		max77804k_read_reg(info->max77804k->muic,
 			MAX77804K_MUIC_REG_CDETCTRL1, &cdetctrl1);
 		cdetctrl1 |= (1 << 0);
 		max77804k_write_reg(info->max77804k->muic,
 			MAX77804K_MUIC_REG_CDETCTRL1, cdetctrl1);
-
-		/* enable charger interrupt */
-		max77804k_write_reg(info->max77804k->i2c,
-			MAX77804K_CHG_REG_CHG_INT_MASK, chg_int_state);
-		max77804k_read_reg(info->max77804k->i2c,
-			MAX77804K_CHG_REG_CHG_INT_MASK, &int_mask);
 	}
 
-	pr_info("%s: INT_MASK(0x%x), CDETCTRL1(0x%x)\n",
-				__func__, int_mask, cdetctrl1);
+	pr_info("%s: CDETCTRL1(0x%x)\n", __func__, cdetctrl1);
 }
 #endif
 
@@ -1091,6 +1065,9 @@ static int max77804k_muic_set_path(struct max77804k_muic_info *info, int path)
 	}
 
 	switch (path) {
+	case PATH_OPEN:
+		val = MAX77804K_MUIC_CTRL1_BIN_0_000;
+		break;
 	case PATH_USB_AP:
 		val = MAX77804K_MUIC_CTRL1_BIN_1_001;
 		break;
@@ -1379,6 +1356,14 @@ static int max77804k_muic_handle_attach(struct max77804k_muic_info *info,
 		break;
 	case ADC_CEA936ATYPE1_CHG:
 	case ADC_CEA936ATYPE2_CHG:
+#if defined(CONFIG_SEC_FACTORY)
+		new_state = BIT(EXTCON_JIG_UARTOFF);
+		if (vbvolt) {
+			if (gInfo->otg_test) /*add for DFMS */
+				new_state |= BIT(EXTCON_USB_HOST_5V);
+		}
+		break;
+#endif
 	case ADC_OPEN:
 		switch (chgtyp) {
 		case CHGTYP_USB:
@@ -1751,6 +1736,47 @@ static int __devinit max77804k_muic_probe(struct platform_device *pdev)
 	return ret;
 }
 
+#if !defined(CONFIG_SEC_FACTORY)
+static int max77804k_suspend(struct device *dev)
+{
+    struct max77804k_muic_info *info = dev_get_drvdata(dev);
+#if defined(CONFIG_CHARGER_SMB1357)
+	if (info) {
+		if (info->path == PATH_USB_CP)
+		return 0;
+	}
+#endif
+    if (info)
+	max77804k_muic_set_path(info, PATH_OPEN);
+    else
+	pr_err("%s, dev_get_drvdata fail\n", __func__);
+
+    return 0;
+}
+
+static int max77804k_resume(struct device *dev)
+{
+    struct max77804k_muic_info *info = dev_get_drvdata(dev);
+#if defined(CONFIG_CHARGER_SMB1357)
+	if (info) {
+		if (info->path == PATH_USB_CP)
+		return 0;
+	}
+#endif
+    if (info)
+	max77804k_muic_set_path(info, info->path);
+    else
+	pr_err("%s, dev_get_drvdata fail\n", __func__);
+
+    return 0;
+}
+
+static const struct dev_pm_ops max77804k_dev_pm_ops = {
+    .suspend	= max77804k_suspend,
+    .resume	= max77804k_resume,
+};
+#endif
+
 static int __devexit max77804k_muic_remove(struct platform_device *pdev)
 {
 	struct max77804k_muic_info *info = platform_get_drvdata(pdev);
@@ -1795,6 +1821,9 @@ static struct platform_driver max77804k_muic_driver = {
 	.driver		= {
 		.name	= DEV_NAME,
 		.owner	= THIS_MODULE,
+#if !defined(CONFIG_SEC_FACTORY)
+		.pm	= &max77804k_dev_pm_ops,
+#endif
 		.shutdown = max77804k_muic_shutdown,
 	},
 	.probe		= max77804k_muic_probe,

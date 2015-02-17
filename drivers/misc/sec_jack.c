@@ -32,16 +32,18 @@
 #include <linux/sec_jack.h>
 #include <linux/of_gpio.h>
 #include <linux/qpnp/qpnp-adc.h>
-#ifdef CONFIG_ARCH_MSM8226
 #include <linux/regulator/consumer.h>
-#endif
 #if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 #include <linux/qpnp/pin.h>
 #endif
 
 #define NUM_INPUT_DEVICE_ID	2
 #define MAX_ZONE_LIMIT		10
+#ifdef CONFIG_MACH_MILLET3G_CHN_OPEN
+#define SEND_KEY_CHECK_TIME_MS	40		/* 40ms */
+#else
 #define SEND_KEY_CHECK_TIME_MS	30		/* 30ms */
+#endif
 #define DET_CHECK_TIME_MS	   100		/* 100ms */
 #define DET_CHECK_TIME_MS_WITH_FSA 50		/* 50ms */
 #define WAKE_LOCK_TIME		(HZ * 5)	/* 5 sec */
@@ -172,13 +174,15 @@ static void sec_jack_gpio_init(struct sec_jack_platform_data *pdata)
 	pr_err("%s HEAT_AIO: gpio_free for %d\n", __func__,
 			pdata->ear_micbias_gpio);
 #endif
-	ret = gpio_request(pdata->ear_micbias_gpio, "ear_micbias_en");
-	if (ret) {
-		pr_err("%s : gpio_request failed for %d\n", __func__,
-			pdata->ear_micbias_gpio);
-		return;
+	if (pdata->ear_micbias_gpio > 0) {
+		ret = gpio_request(pdata->ear_micbias_gpio, "ear_micbias_en");
+		if (ret) {
+			pr_err("%s : gpio_request failed for %d\n", __func__,
+				pdata->ear_micbias_gpio);
+			return;
+		}
+		gpio_direction_output(pdata->ear_micbias_gpio, 0);
 	}
-	gpio_direction_output(pdata->ear_micbias_gpio, 0);
 #endif
 
 	if (pdata->fsa_en_gpio > 0) {
@@ -236,12 +240,34 @@ static void set_sec_micbias_state(struct sec_jack_info *hi, bool state)
 	struct sec_jack_platform_data *pdata = hi->pdata;
 
 #ifdef CONFIG_ARCH_MSM8226
-        if(pdata->ear_micbias_gpio > 0)
-           gpio_set_value_cansleep(pdata->ear_micbias_gpio, state); /*Uses external Mic Bias*/
-        else
-			msm8226_enable_ear_micbias(state); /* Uses WCD Mic Bias*/
-#else 
-	 gpio_set_value_cansleep(pdata->ear_micbias_gpio, state);	
+	if(pdata->ear_micbias_gpio > 0)
+	   gpio_set_value_cansleep(pdata->ear_micbias_gpio, state); /*Uses external Mic Bias*/
+	else
+		msm8226_enable_ear_micbias(state); /* Uses WCD Mic Bias*/
+#else
+	static struct regulator *ear_micbias_regulator = NULL;
+	static int micbias_state_count = 0;
+	if (pdata->ear_micbias_gpio > 0) {
+		 gpio_set_value_cansleep(pdata->ear_micbias_gpio, state);
+	} else if (pdata->ear_micbias_ldo != NULL) {
+		if (ear_micbias_regulator == NULL) {
+			ear_micbias_regulator = regulator_get(NULL, pdata->ear_micbias_ldo);
+			if (IS_ERR(ear_micbias_regulator)) {
+				ear_micbias_regulator = NULL;
+				pr_err("%s: regulator_get failed for %s\n", __func__, pdata->ear_micbias_ldo);
+				return;
+			}
+			regulator_set_voltage(ear_micbias_regulator, 2800000, 2800000);
+		}
+
+		if (state == true && micbias_state_count == 0) {
+			if (!regulator_enable(ear_micbias_regulator))
+				micbias_state_count = 1;
+		} else if (state == false && micbias_state_count == 1) {
+			if (!regulator_disable(ear_micbias_regulator))
+				micbias_state_count = 0;
+		}
+	}
 #endif
 }
 
@@ -656,9 +682,13 @@ static struct sec_jack_platform_data *sec_jack_populate_dt_pdata(struct device *
 		of_property_read_u32(dev->of_node, "qcom,earjack-micbias-expander-gpio", &pdata->ear_micbias_gpio);
 	if (pdata->ear_micbias_gpio < 0) {
 		pr_err("%s : can not find the earjack-micbias-gpio in the dt\n", __func__);
+		if (of_property_read_string(dev->of_node, "qcom,earjack-micbias-ldo", &pdata->ear_micbias_ldo) < 0)
+			pr_err("%s: can not find  earjack-micbias-ldo in the dt\n", __func__);
+		else
+			pr_info("%s : earjack-micbias-ldo=%s\n", __func__, pdata->ear_micbias_ldo);
 	} else
 		pr_info("%s : earjack-micbias-gpio =%d\n", __func__, pdata->ear_micbias_gpio);	
-			
+
 	pdata->fsa_en_gpio = of_get_named_gpio(dev->of_node, "qcom,earjack-fsa_en-gpio", 0);
 	if (pdata->fsa_en_gpio < 0) 
 		of_property_read_u32(dev->of_node, "qcom,earjack-fsa_en-expander-gpio", &pdata->fsa_en_gpio);

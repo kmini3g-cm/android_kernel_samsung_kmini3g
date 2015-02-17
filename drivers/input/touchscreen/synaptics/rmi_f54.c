@@ -19,7 +19,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <asm/unaligned.h>
-//#include <mach/cpufreq.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
@@ -2278,6 +2277,12 @@ static ssize_t cmd_store(struct device *dev, struct device_attribute *attr,
 		return count;
 	}
 
+	if ((int)count >= CMD_STR_LEN) {
+		dev_info(&rmi4_data->i2c_client->dev, "%s: cmd size overflow![%d]\n",
+				__func__, (int)count);
+		return count;
+	}
+
 	mutex_lock(&data->cmd_lock);
 	data->cmd_is_running = true;
 	mutex_unlock(&data->cmd_lock);
@@ -2432,6 +2437,9 @@ static bool synaptics_skip_firmware_update(struct synaptics_rmi4_data *rmi4_data
 		(rmi4_data->ic_revision_of_ic >= SYNAPTICS_IC_REVISION_A2)) {
 		rmi4_data->ic_revision_of_bin = (int)fw_entry->data[IC_REVISION_BIN_OFFSET_S5100_A2];
 		rmi4_data->fw_version_of_bin = (int)fw_entry->data[FW_VERSION_BIN_OFFSET_S5100_A2];
+	} else if (rmi4_data->ic_version == SYNAPTICS_PRODUCT_ID_S5006) {
+		rmi4_data->ic_revision_of_bin = (int)fw_entry->data[IC_REVISION_BIN_OFFSET];
+		rmi4_data->fw_version_of_bin = (int)fw_entry->data[FW_VERSION_BIN_OFFSET];		
 	} else if (rmi4_data->ic_version >= SYNAPTICS_PRODUCT_ID_S5050) {
 		rmi4_data->ic_revision_of_bin = (int)fw_entry->data[IC_REVISION_BIN_OFFSET_S5050];
 		rmi4_data->fw_version_of_bin = (int)fw_entry->data[FW_VERSION_BIN_OFFSET_S5050];
@@ -2494,6 +2502,14 @@ static bool synaptics_skip_firmware_update(struct synaptics_rmi4_data *rmi4_data
 	}
 #endif
 
+	/* temp chagall sdc firmware */
+	if ((rmi4_data->ic_version == SYNAPTICS_PRODUCT_ID_S5710) && (rmi4_data->fw_version_of_ic == 0x34)) {
+		dev_info(&rmi4_data->i2c_client->dev,
+			"%s: chagall's sdc firmware is 0x34, it should be updated 0x24 firmware\n",
+				__func__);
+		return false;
+	}
+	
 	if (rmi4_data->fw_version_of_bin <= rmi4_data->fw_version_of_ic) {
 		dev_info(&rmi4_data->i2c_client->dev,
 				"%s: Do not need to update\n",
@@ -2575,6 +2591,9 @@ static int synaptics_load_fw_from_kernel(struct synaptics_rmi4_data *rmi4_data, 
 		(rmi4_data->ic_revision_of_ic >= SYNAPTICS_IC_REVISION_A2)) {
 		rmi4_data->ic_revision_of_bin = (int)fw_entry->data[IC_REVISION_BIN_OFFSET_S5100_A2];
 		rmi4_data->fw_version_of_bin = (int)fw_entry->data[FW_VERSION_BIN_OFFSET_S5100_A2];
+	} else if (rmi4_data->ic_version == SYNAPTICS_PRODUCT_ID_S5006) {
+		rmi4_data->ic_revision_of_bin = (int)fw_entry->data[IC_REVISION_BIN_OFFSET];
+		rmi4_data->fw_version_of_bin = (int)fw_entry->data[FW_VERSION_BIN_OFFSET];
 	} else if (rmi4_data->ic_version >= SYNAPTICS_PRODUCT_ID_S5050) {
 		rmi4_data->ic_revision_of_bin = (int)fw_entry->data[IC_REVISION_BIN_OFFSET_S5050];
 		rmi4_data->fw_version_of_bin = (int)fw_entry->data[FW_VERSION_BIN_OFFSET_S5050];
@@ -2650,6 +2669,12 @@ static int synaptics_load_fw_from_ums(struct synaptics_rmi4_data *rmi4_data)
 				fw_release_date_of_bin =
 					(int)(fw_data[DATE_OF_FIRMWARE_BIN_OFFSET_S5100_A2] << 8
 							| fw_data[DATE_OF_FIRMWARE_BIN_OFFSET_S5100_A2 + 1]);
+			} else if (rmi4_data->ic_version == SYNAPTICS_PRODUCT_ID_S5006) {
+				ic_revision_of_bin = (int)fw_data[IC_REVISION_BIN_OFFSET];
+				fw_version_of_bin = (int)fw_data[FW_VERSION_BIN_OFFSET];
+				fw_release_date_of_bin =
+					(int)(fw_data[DATE_OF_FIRMWARE_BIN_OFFSET] << 8
+							| fw_data[DATE_OF_FIRMWARE_BIN_OFFSET + 1]);
 			} else if (rmi4_data->ic_version >= SYNAPTICS_PRODUCT_ID_S5050) {
 				ic_revision_of_bin = (int)fw_data[IC_REVISION_BIN_OFFSET_S5050];
 				fw_version_of_bin = (int)fw_data[FW_VERSION_BIN_OFFSET_S5050];
@@ -2811,6 +2836,10 @@ static void get_fac_fw_ver_bin(void)
 			snprintf(data->cmd_buff, CMD_RESULT_STR_LEN, "SY00%02X%02X",
 					(int)fw_entry->data[IC_REVISION_BIN_OFFSET_S5100_A2],
 					(int)fw_entry->data[FW_VERSION_BIN_OFFSET_S5100_A2]);
+		else if (rmi4_data->ic_version >= SYNAPTICS_PRODUCT_ID_S5006)
+			snprintf(data->cmd_buff, CMD_RESULT_STR_LEN, "SY00%02X%02X",
+					(int)fw_entry->data[IC_REVISION_BIN_OFFSET],
+					(int)fw_entry->data[FW_VERSION_BIN_OFFSET]);
 		else if (rmi4_data->ic_version >= SYNAPTICS_PRODUCT_ID_S5050)
 			snprintf(data->cmd_buff, CMD_RESULT_STR_LEN, "SY00%02X%02X",
 					(int)fw_entry->data[IC_REVISION_BIN_OFFSET_S5050],
@@ -2996,6 +3025,8 @@ static void get_chip_name(void)
 		snprintf(data->cmd_buff, CMD_RESULT_STR_LEN, "%s", tostring(S5707));
 	else if (f54->rmi4_data->ic_version == SYNAPTICS_PRODUCT_ID_S5708)
 		snprintf(data->cmd_buff, CMD_RESULT_STR_LEN, "%s", tostring(S5708));
+	else if (f54->rmi4_data->ic_version == SYNAPTICS_PRODUCT_ID_S5006)
+		snprintf(data->cmd_buff, CMD_RESULT_STR_LEN, "%s", tostring(S5006));
 	else
 		snprintf(data->cmd_buff, CMD_RESULT_STR_LEN, "%s", tostring(NA));
 

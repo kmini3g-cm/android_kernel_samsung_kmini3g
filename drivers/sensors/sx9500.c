@@ -62,16 +62,16 @@
 #define CSX_STATUS_REG           SX9500_TCHCMPSTAT_TCHSTAT0_FLAG
 #endif
 
-#define LIMIT_PROXOFFSET                2550 /* 30pF */
+#define LIMIT_PROXOFFSET                3481 /* 40pF */
 #define LIMIT_PROXUSEFUL                10000
-#define STANDARD_CAP_MAIN               300000
+#define STANDARD_CAP_MAIN               400000
 
 #define DEFAULT_INIT_TOUCH_THRESHOLD    2000
 #define DEFAULT_NORMAL_TOUCH_THRESHOLD  17
 
-#define	TOUCH_CHECK_REF_AMB      0 // 44523
-#define	TOUCH_CHECK_SLOPE        0 // 50
-#define	TOUCH_CHECK_MAIN_AMB     0 // 151282
+#define TOUCH_CHECK_REF_AMB      0 /* 44523 */
+#define TOUCH_CHECK_SLOPE        0 /* 50 */
+#define TOUCH_CHECK_MAIN_AMB     0 /* 151282 */
 
 /* CS0, CS1, CS2, CS3 */
 #define TOTAL_BOTTON_COUNT       1
@@ -100,8 +100,19 @@ struct sx9500_p {
 
 	int irq;
 	int gpioNirq;
+#ifdef CONFIG_SENSORS_GRIP_ADJDET
+	int gpio_adjdet;
+	int irq_adjdet;
+	int grip_state;
+	int enable_adjdet;
+#endif
 	int state[TOTAL_BOTTON_COUNT];
-#if  defined(CONFIG_SEC_MILLET_PROJECT)  ||  defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_BERLUTI_PROJECT)
+#if defined(CONFIG_SEC_MILLET_PROJECT) \
+	|| defined(CONFIG_SEC_MATISSE_PROJECT) \
+	|| defined(CONFIG_SEC_BERLUTI_PROJECT) \
+	|| defined(CONFIG_SEC_DEGAS_PROJECT) \
+	||  defined(CONFIG_SEC_T8_PROJECT) \
+	||  defined(CONFIG_SEC_T10_PROJECT)
 	struct regulator *L19;
 	struct regulator *lvs1_1p8;
 #endif
@@ -159,9 +170,12 @@ static int sx9500_i2c_read(struct sx9500_p *data, u8 reg_addr, u8 *buf)
 static u8 sx9500_read_irqstate(struct sx9500_p *data)
 {
 	u8 val = 0;
+	u8 ret;
 
-	if (sx9500_i2c_read(data, SX9500_IRQSTAT_REG, &val) >= 0)
-		return (val & 0x00FF);
+	if (sx9500_i2c_read(data, SX9500_IRQSTAT_REG, &val) >= 0) {
+		ret = val & 0x00FF;
+		return ret;
+	}
 
 	return 0;
 }
@@ -186,7 +200,7 @@ static void sx9500_initialize_chip(struct sx9500_p *data)
 {
 	int cnt = 0;
 
-	while((sx9500_get_nirq_state(data) == 0) && (cnt++ < 10)) {
+	while ((sx9500_get_nirq_state(data) == 0) && (cnt++ < 10)) {
 		sx9500_read_irqstate(data);
 		msleep(20);
 	}
@@ -222,21 +236,33 @@ static void send_event(struct sx9500_p *data, int cnt, u8 state)
 	if (data->flagDataSkip == true)
 		return;
 
+#ifdef CONFIG_SENSORS_GRIP_ADJDET
+	if (data->enable_adjdet == 1
+	   &&
+	   gpio_get_value_cansleep(data->gpio_adjdet) == 1) {
+		pr_info("[SX9500]: %s : adj detect cable connected," \
+			" skip grip sensor\n", __func__);
+		return;
+	}
+#endif
 	switch (cnt) {
-		case 0:
-			if (state == ACTIVE)
-				input_report_rel(data->input, REL_MISC, 1);
-			else
-				input_report_rel(data->input, REL_MISC, 2);
-			break;
-		case 1:
-		case 2:
-		case 3:
-			pr_info("[SX9500]: %s - There is no defined event for"
-				" button %d.\n", __func__, cnt);
-			break;
-		default:
-			break;
+	case 0:
+#ifdef CONFIG_SENSORS_GRIP_ADJDET
+		data->grip_state = state;
+#endif
+		if (state == ACTIVE)
+			input_report_rel(data->input, REL_MISC, 1);
+		else
+			input_report_rel(data->input, REL_MISC, 2);
+		break;
+	case 1:
+	case 2:
+	case 3:
+		pr_info("[SX9500]: %s - There is no defined event for" \
+			" button %d.\n", __func__, cnt);
+		break;
+	default:
+		break;
 	}
 
 	input_sync(data->input);
@@ -250,8 +276,8 @@ static void sx9500_display_data_reg(struct sx9500_p *data)
 	for (i = 0; i < TOTAL_BOTTON_COUNT; i++) {
 		sx9500_i2c_write(data, SX9500_REGSENSORSELECT, i);
 		pr_info("[SX9500]: ############# %d button #############\n", i);
-		for (reg = SX9500_REGUSEMSB; reg <= SX9500_REGOFFSETLSB; reg++)
-		{
+		for (reg = SX9500_REGUSEMSB;
+			reg <= SX9500_REGOFFSETLSB; reg++) {
 			sx9500_i2c_read(data, reg, &val);
 			pr_info("[SX9500]: %s - Register(0x%2x) data(0x%2x)\n",
 				__func__, reg, val);
@@ -259,6 +285,21 @@ static void sx9500_display_data_reg(struct sx9500_p *data)
 	}
 }
 
+static s32 sx9500_get_init_threshold(struct sx9500_p *data)
+{
+	s32 threshold;
+
+	/* Because the STANDARD_CAP_MAIN was 300,000 in the previous patch,
+	 * the exception code is added. It will be removed later */
+	if (data->calData[0] == 0)
+		threshold = STANDARD_CAP_MAIN + data->initTh;
+	else if (data->calData[0] > 100000)
+		threshold = data->initTh + data->calData[0];
+	else
+		threshold = 300000 + data->initTh + data->calData[0];
+
+	return threshold;
+}
 static s32 sx9500_get_capMain(struct sx9500_p *data)
 {
 	u8 msByte = 0;
@@ -286,7 +327,7 @@ static s32 sx9500_get_capMain(struct sx9500_p *data)
 	lsByte = (u8)(offset - (((u16)msByte) << 6));
 
 	capMain = 2 * (((s32)msByte * 3600) + ((s32)lsByte * 225)) +
-		(((s32)useful * 50000) / (8 * 65536) );
+		(((s32)useful * 50000) / (8 * 65536));
 
 	/* Calculate out the Reference Cap information */
 	sx9500_i2c_write(data, SX9500_REGSENSORSELECT, REF_SENSOR);
@@ -310,7 +351,7 @@ static s32 sx9500_get_capMain(struct sx9500_p *data)
 	lsByte = (u8)(offset - (((u16)msByte) << 6));
 
 	capRef = 2 * (((s32)msByte * 3600) + ((s32)lsByte * 225)) +
-		(((s32)capRef * 50000) / (8 * 65536) );
+		(((s32)capRef * 50000) / (8 * 65536));
 
 	capRef = (capRef - TOUCH_CHECK_REF_AMB) *
 		TOUCH_CHECK_SLOPE + TOUCH_CHECK_MAIN_AMB;
@@ -326,9 +367,9 @@ static s32 sx9500_get_capMain(struct sx9500_p *data)
 
 static void sx9500_touchCheckWithRefSensor(struct sx9500_p *data)
 {
-	s32 capMain;
+	s32 capMain, threshold;
 	int cnt = 0;
-	s32 threshold = STANDARD_CAP_MAIN + data->initTh + data->calData[0];
+	threshold = sx9500_get_init_threshold(data);
 
 	capMain = sx9500_get_capMain(data);
 
@@ -510,7 +551,7 @@ static int sx9500_do_calibrate(struct sx9500_p *data, bool do_calib)
 	}
 
 	capMain = sx9500_get_capMain(data);
-	data->calData[0] = capMain - STANDARD_CAP_MAIN;
+	data->calData[0] = capMain;
 
 	if (atomic_read(&data->enable) == OFF)
 		sx9500_set_mode(data, SX9500_MODE_SLEEP);
@@ -699,8 +740,8 @@ static ssize_t sx9500_threshold_show(struct device *dev,
 	struct sx9500_p *data = dev_get_drvdata(dev);
 
 	/* It's for init touch */
-	return snprintf(buf, PAGE_SIZE, "%d\n",
-			STANDARD_CAP_MAIN + data->initTh + data->calData[0]);
+		return snprintf(buf, PAGE_SIZE, "%d\n",
+			sx9500_get_init_threshold(data));
 }
 
 static ssize_t sx9500_threshold_store(struct device *dev,
@@ -921,8 +962,8 @@ static void sx9500_touch_process(struct sx9500_p *data)
 {
 	u8 status = 0;
 	int cnt;
-	s32 capMain;
-	s32 threshold = STANDARD_CAP_MAIN + data->initTh + data->calData[0];
+	s32 capMain, threshold;
+	threshold = sx9500_get_init_threshold(data);
 
 	capMain = sx9500_get_capMain(data);
 
@@ -981,6 +1022,29 @@ static void sx9500_irq_work_func(struct work_struct *work)
 
 	sx9500_process_interrupt(data);
 }
+
+#ifdef CONFIG_SENSORS_GRIP_ADJDET
+static irqreturn_t sx9500_adjdet_interrupt_thread(int irq, void *pdata)
+{
+	struct sx9500_p *data = pdata;
+
+	if (gpio_get_value_cansleep(data->gpio_adjdet) == 0)
+		pr_info("[SX9500]: %s : adj detect cable disconnect!" \
+				" grip sensor enable\n", __func__);
+	else {
+		pr_info("[SX9500]: %s : adj detect cable connect!" \
+				" grip sensordisable\n", __func__);
+		if (data->grip_state == ACTIVE) {
+			pr_info("[SX9500]: %s : Send FAR(IDLE)\n", __func__);
+			input_report_rel(data->input, REL_MISC, 2);
+			input_sync(data->input);
+			data->grip_state = IDLE;
+		}
+	}
+
+	return IRQ_HANDLED;
+}
+#endif
 
 static irqreturn_t sx9500_interrupt_thread(int irq, void *pdata)
 {
@@ -1058,6 +1122,26 @@ static int sx9500_setup_pin(struct sx9500_p *data)
 		return ret;
 	}
 
+#ifdef CONFIG_SENSORS_GRIP_ADJDET
+	if (data->enable_adjdet == 1) {
+		ret = gpio_request(data->gpio_adjdet, "SX9500_ADJDETIRQ");
+		if (ret < 0) {
+			pr_err("[SX9500]: %s - gpio %d request failed (%d)\n",
+				__func__, data->gpio_adjdet, ret);
+			return ret;
+		}
+
+		ret = gpio_direction_input(data->gpio_adjdet);
+
+		if (ret < 0) {
+			pr_err("[SX9500]: %s - failed to set" \
+				" gpio %d as input (%d)\n",
+				__func__, data->gpio_adjdet, ret);
+			gpio_free(data->gpio_adjdet);
+			return ret;
+		}
+	}
+#endif
 	return 0;
 }
 
@@ -1095,20 +1179,38 @@ static int sx9500_parse_dt(struct sx9500_p *data, struct device *dev)
 	data->gpioNirq = of_get_named_gpio_flags(dNode,
 		"sx9500-i2c,nirq-gpio", 0, &flags);
 	if (data->gpioNirq < 0) {
-		pr_err("[SENSOR]: %s - get gpioNirq error\n", __func__);
+		pr_err("[SX9500]: %s - get gpioNirq error\n", __func__);
 		return -ENODEV;
 	}
-
+#ifdef CONFIG_SENSORS_GRIP_ADJDET
+	data->gpio_adjdet = of_get_named_gpio_flags(dNode,
+		"sx9500-i2c,adjdet-gpio", 0, &flags);
+	if (data->gpio_adjdet < 0) {
+		pr_err("[SX9500]: %s - get gpio_adjdet error\n", __func__);
+		data->enable_adjdet = 0;
+	} else {
+		pr_info("[SX9500]: %s - get gpio_adjdet success\n", __func__);
+		data->enable_adjdet = 1;
+	}
+#endif
 	return 0;
 }
 
-#if defined(CONFIG_SEC_MILLET_PROJECT)  || defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_BERLUTI_PROJECT)
+#if defined(CONFIG_SEC_MILLET_PROJECT) \
+	|| defined(CONFIG_SEC_MATISSE_PROJECT) \
+	|| defined(CONFIG_SEC_BERLUTI_PROJECT) \
+	|| defined(CONFIG_SEC_DEGAS_PROJECT) \
+	|| defined(CONFIG_SEC_T8_PROJECT) \
+	|| defined(CONFIG_SEC_T10_PROJECT)
 int sx9500_power_on(struct sx9500_p *data, bool onoff)
 {
 	int ret = -1;
-#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_BERLUTI_PROJECT)
+#if defined(CONFIG_SEC_MILLET_PROJECT) \
+	|| defined(CONFIG_SEC_BERLUTI_PROJECT) \
+	|| defined(CONFIG_SEC_DEGAS_PROJECT) \
+	|| defined(CONFIG_SEC_T8_PROJECT)
 	if (!data->L19) {
-		data->L19= regulator_get(&data->client->dev, "8226_l19");
+		data->L19 = regulator_get(&data->client->dev, "8226_l19");
 		if (!data->L19) {
 			pr_err("%s: regulator pointer null L19, rc=%d\n",
 				__func__, ret);
@@ -1122,9 +1224,9 @@ int sx9500_power_on(struct sx9500_p *data, bool onoff)
 		}
 	}
 #endif
-#if defined(CONFIG_SEC_MATISSE_PROJECT)
+#if defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_T10_PROJECT)
 	if (!data->L19) {
-		data->L19= regulator_get(&data->client->dev, "8226_l15");
+		data->L19 = regulator_get(&data->client->dev, "8226_l15");
 		if (!data->L19) {
 			pr_err("%s: regulator pointer null L19, rc=%d\n",
 				__func__, ret);
@@ -1141,12 +1243,14 @@ int sx9500_power_on(struct sx9500_p *data, bool onoff)
 
 	if (!data->lvs1_1p8) {
 		data->lvs1_1p8 = regulator_get(&data->client->dev, "8226_lvs1");
-		if(!data->lvs1_1p8){
-			pr_err("%s: regulator_get for 8226_lvs1 failed\n", __func__);
+		if (!data->lvs1_1p8) {
+			pr_err("%s: regulator_get for 8226_lvs1 failed\n",
+				__func__);
 			return 0;
 		}
 	}
-	if(onoff){
+
+	if (onoff) {
 		ret = regulator_enable(data->L19);
 		if (ret) {
 			pr_err("%s: Failed to enable regulator l19.\n",
@@ -1160,9 +1264,7 @@ int sx9500_power_on(struct sx9500_p *data, bool onoff)
 				__func__);
 			return ret;
 		}
-
-	}
-	else {
+	} else {
 		ret = regulator_disable(data->L19);
 		if (ret) {
 			pr_err("%s: Failed to disable regulatorl19.\n",
@@ -1220,7 +1322,12 @@ static int sx9500_probe(struct i2c_client *client,
 
 	i2c_set_clientdata(client, data);
 	data->client = client;
-#if defined(CONFIG_SEC_MILLET_PROJECT)  ||  defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_BERLUTI_PROJECT)
+#if defined(CONFIG_SEC_MILLET_PROJECT) \
+	|| defined(CONFIG_SEC_MATISSE_PROJECT) \
+	|| defined(CONFIG_SEC_BERLUTI_PROJECT) \
+	|| defined(CONFIG_SEC_DEGAS_PROJECT) \
+	|| defined(CONFIG_SEC_T8_PROJECT) \
+	|| defined(CONFIG_SEC_T10_PROJECT)
 	sx9500_power_on(data, 1);
 #endif
 	/* read chip id */
@@ -1242,6 +1349,7 @@ static int sx9500_probe(struct i2c_client *client,
 
 	INIT_DELAYED_WORK(&data->init_work, sx9500_init_work_func);
 	INIT_DELAYED_WORK(&data->irq_work, sx9500_irq_work_func);
+
 	mutex_init(&data->mode_mutex);
 
 	data->irq = gpio_to_irq(data->gpioNirq);
@@ -1250,10 +1358,29 @@ static int sx9500_probe(struct i2c_client *client,
 	ret = request_threaded_irq(data->irq, NULL, sx9500_interrupt_thread,
 			IRQF_TRIGGER_FALLING , "sx9500_irq", data);
 	if (ret < 0) {
-		pr_err("[SX9500]: %s - failed to set request_threaded_irq %d"
+		pr_err("[SX9500]: %s - failed to set request_threaded_irq %d" \
 			" as returning (%d)\n", __func__, data->irq, ret);
 		goto exit_request_threaded_irq;
 	}
+
+#ifdef CONFIG_SENSORS_GRIP_ADJDET
+	if (data->enable_adjdet == 1) {
+		data->irq_adjdet = gpio_to_irq(data->gpio_adjdet);
+		/* initailize interrupt reporting */
+		ret = request_threaded_irq(data->irq_adjdet, NULL,
+				sx9500_adjdet_interrupt_thread,
+				IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
+				"sx9500_adjdet_irq", data);
+		if (ret < 0) {
+			pr_err("[SX9500]: %s - failed to set" \
+				" request_threaded_adjdet_irq %d" \
+				" as returning (%d)\n",
+				__func__, data->irq_adjdet, ret);
+			goto exit_request_threaded_adjdet_irq;
+		}
+		data->grip_state = IDLE;
+	}
+#endif
 
 	disable_irq(data->irq);
 
@@ -1262,7 +1389,10 @@ static int sx9500_probe(struct i2c_client *client,
 	pr_info("[SX9500]: %s - Probe done!\n", __func__);
 
 	return 0;
-
+#ifdef CONFIG_SENSORS_GRIP_ADJDET
+exit_request_threaded_adjdet_irq:
+	free_irq(data->irq, data);
+#endif
 exit_request_threaded_irq:
 	mutex_destroy(&data->mode_mutex);
 	sensors_unregister(data->factory_device, sensor_attrs);
@@ -1292,6 +1422,10 @@ static int __devexit sx9500_remove(struct i2c_client *client)
 	cancel_delayed_work_sync(&data->init_work);
 	cancel_delayed_work_sync(&data->irq_work);
 	free_irq(data->irq, data);
+#ifdef CONFIG_SENSORS_GRIP_ADJDET
+	if (data->enable_adjdet == 1)
+		free_irq(data->irq_adjdet, data);
+#endif
 	gpio_free(data->gpioNirq);
 
 	wake_lock_destroy(&data->grip_wake_lock);

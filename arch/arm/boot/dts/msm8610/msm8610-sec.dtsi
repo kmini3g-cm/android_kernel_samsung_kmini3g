@@ -188,7 +188,7 @@
 		qcom,buffer-type-tz-usage-map = <0x1 0x1>,
 						<0x1fe 0x2>;
 		qcom,hfi = "q6";
-		qcom,max-hw-load = <108000>; /* 720p @ 30 * 1 */
+		qcom,max-hw-load = <244800>; /* 1080p @ 30 * 1 */
 		qcom,vidc-iommu-domains {
 			qcom,domain-ns {
 				qcom,vidc-domain-phandle = <&q6_domain_ns>;
@@ -248,7 +248,7 @@
 
 		qcom,msm-bus,name = "usb2";
 		qcom,msm-bus,num-cases = <2>;
-		qcom,msm-bus,active-only = <0>;
+		/* qcom,msm-bus,active-only = <0>; */
 		qcom,msm-bus,num-paths = <1>;
 		qcom,msm-bus,vectors-KBps =
 				<87 512 0 0>,
@@ -592,28 +592,6 @@
 		qcom,i2c-bus-freq = <100000>;
 	};
 
-	    i2c@18 {
-		cell-index = <18>;
-		compatible = "i2c-gpio";
-		gpios = <&msmgpio 90 0 /* sda */
-			&msmgpio 91 0 /* scl */
-			>;
-		i2c-gpio,delay-us = <2>;
-		#i2c-gpio,sda-open-drain= <0>;
-		#i2c-gpio,scl-open-drain= <0>;
-		#address-cells = <1>;
-		#size-cells = <0>;
-		pn547@2B {
-			compatible = "pn547";
-			reg = <0x2B>;
-			interrupt-parent = <&msmgpio>;
-			interrupts = <93 0>;
-			pn547,irq-gpio = <&msmgpio 93 0x00>;
-			pn547,ven-gpio = <&msmgpio 92 0x1>;
-			pn547,firm-gpio = <&msmgpio 101 0x00>;
-		};
-	};
-
 	spi_4: spi@f9926000 { /* BLSP1 QUP4 */
 		compatible = "qcom,spi-qup-v2";
 		#address-cells = <1>;
@@ -943,7 +921,7 @@
 		qcom,qsee-ce-hw-instance = <0>;
 		qcom,msm-bus,name = "qseecom-noc";
 		qcom,msm-bus,num-cases = <4>;
-		qcom,msm-bus,active-only = <0>;
+		/* qcom,msm-bus,active-only = <0>; */
 		qcom,msm-bus,num-paths = <1>;
 		qcom,msm-bus,vectors-KBps =
 				<55 512 0 0>,
@@ -1020,7 +998,7 @@
 		qcom,ce-hw-shared;
 		qcom,msm-bus,name = "qcrypto-noc";
 		qcom,msm-bus,num-cases = <2>;
-		qcom,msm-bus,active-only = <0>;
+		/* qcom,msm-bus,active-only = <0>; */
 		qcom,msm-bus,num-paths = <1>;
 		qcom,msm-bus,vectors-KBps =
 				<55 512 0 0>,
@@ -1038,7 +1016,7 @@
 		qcom,ce-hw-shared;
 		qcom,msm-bus,name = "qcedev-noc";
 		qcom,msm-bus,num-cases = <2>;
-		qcom,msm-bus,active-only = <0>;
+		/* qcom,msm-bus,active-only = <0>; */
 		qcom,msm-bus,num-paths = <1>;
 		qcom,msm-bus,vectors-KBps =
 				<55 512 0 0>,

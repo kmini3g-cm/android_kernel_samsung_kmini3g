@@ -40,6 +40,9 @@
 struct taos_platform_data {
 	int als_int;
 	u32 als_int_flags;
+#if defined(CONFIG_SEC_S_PROJECT)
+	int enable;
+#endif
 	void (*power)(bool);
 	int (*light_adc_value)(void);
 	void (*led_on)(bool);

@@ -1,5 +1,32 @@
 /*
- *  file.c
+ * fs/scfs/file.c
+ *
+ * Copyright (C) 2014 Samsung Electronics Co., Ltd.
+ *   Authors: Jongmin Kim <jm45.kim@samsung.com>
+ *            Sangwoo Lee <sangwoo2.lee@samsung.com>
+ *            Inbae Lee   <inbae.lee@samsung.com>
+ *
+ * This program has been developed as a stackable file system based on
+ * the WrapFS, which was written by:
+ *
+ * Copyright (C) 1997-2003 Erez Zadok
+ * Copyright (C) 2001-2003 Stony Brook University
+ * Copyright (C) 2004-2006 International Business Machines Corp.
+ *   Author(s): Michael A. Halcrow <mahalcro@us.ibm.com>
+ *              Michael C. Thompson <mcthomps@us.ibm.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "scfs.h"
@@ -53,14 +80,12 @@ static int scfs_open(struct inode *inode, struct file *file)
 	if (sii->cinfo_array_size && !sii->cinfo_array) {
 		ASSERT(IS_COMPRESSED(sii));
 		SCFS_PRINT("info size = %d \n", sii->cinfo_array_size);
-		buf = vmalloc(sii->cinfo_array_size);
+		//buf = vmalloc(sii->cinfo_array_size);
+		buf = scfs_cinfo_alloc(sii, sii->cinfo_array_size);
 		if (!buf) {
 			ret = SCFS_ERR_OUT_OF_MEMORY;
 			goto out;
 		}
-#if SCFS_PROFILE_MEM
-		atomic_add(sii->cinfo_array_size, &sbi->vmalloc_size);
-#endif
 		pos = i_size_read(sii->lower_inode) - sii->cinfo_array_size -
 			sizeof(struct comp_footer);
 
@@ -82,12 +107,9 @@ out:
 #if SCFS_PROFILE_MEM
 		atomic_sub(sizeof(struct scfs_file_info), &sbi->kmcache_size);
 #endif
-		if (buf) {
-			vfree(buf);
-#if SCFS_PROFILE_MEM
-			atomic_sub(sii->cinfo_array_size, &sbi->vmalloc_size);
-#endif
-		}
+		if (buf)
+			scfs_cinfo_free(sii, buf);
+
 		sii->cinfo_array = NULL;
 	}
 

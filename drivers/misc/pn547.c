@@ -56,6 +56,10 @@
 #define I2C_ADDR_READ_L		0x51
 #define I2C_ADDR_READ_H		0x57
 
+#ifdef CONFIG_MACH_VICTORLTE_CTC
+extern unsigned int system_rev;
+#endif
+
 struct pn547_dev {
 	wait_queue_head_t read_wq;
 	struct mutex read_mutex;
@@ -443,7 +447,14 @@ static int pn547_probe(struct i2c_client *client,
 	int addrcnt;
 	struct pn547_i2c_platform_data *platform_data;
 	struct pn547_dev *pn547_dev;
-
+#ifdef CONFIG_MACH_VICTORLTE_CTC
+	pr_info("%s : start  system_rev : %d\n", __func__,system_rev);
+	if (system_rev < 3)
+	{
+		pr_info("%s : probe fail \n", __func__);
+		return -ENODEV;
+	}
+#endif
 	if (client->dev.of_node) {
 		platform_data = devm_kzalloc(&client->dev,
 			sizeof(struct pn547_i2c_platform_data), GFP_KERNEL);

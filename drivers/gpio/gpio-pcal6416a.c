@@ -471,7 +471,7 @@ static int pcal6416a_parse_dt(struct device *dev,
 		}
 	} else {
 		pdata->init_config = 0x0000;
-		pdata->init_data_out = 0x0000;
+		pdata->init_data_out = 0x0400;
 		pdata->init_en_pull = 0x0000;
 		pdata->init_sel_pull = 0x0000;
 	}

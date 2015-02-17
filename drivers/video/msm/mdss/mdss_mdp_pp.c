@@ -863,7 +863,7 @@ static int pp_vig_pipe_setup(struct mdss_mdp_pipe *pipe, u32 *op)
 		 * TODO: Needs to be part of dirty bit logic: if there is a
 		 * previously configured pipe need to re-configure CSC matrix
 		 */
-#ifdef CONFIG_FB_MSM_CAMERA_CSC
+#if defined(CONFIG_FB_MSM_CAMERA_CSC) && !defined(CONFIG_MACH_KS01SKT) && !defined(CONFIG_MACH_KS01EUR) && !defined(CONFIG_MACH_KS01KTT) && !defined(CONFIG_MACH_KS01LGT) && !defined(CONFIG_SEC_ATLANTIC_PROJECT)
 		if ((pipe->play_cnt == 0)||(pre_csc_update != csc_update)) {
 #else
 		if ((pipe->play_cnt == 0)) {

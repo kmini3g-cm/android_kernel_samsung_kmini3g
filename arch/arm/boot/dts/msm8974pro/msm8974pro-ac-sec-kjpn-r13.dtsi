@@ -732,9 +732,11 @@
 	};
 
 	gpio@c100 { /* GPIO 2 */
-		/* Unused */
+		/* Vol_down button */
 		qcom,mode = <0>;		/* Digital input */
 		qcom,pull = <0>;		/* Pull up 30 uA */
+		qcom,vin-sel = <2>;		/* PMA8084 S4 = 1.8 V */
+		qcom,src-sel = <0>;		/* Constant */
 		qcom,master-en = <1>;
 	};
 
@@ -1034,7 +1036,7 @@
 				qcom,pon-type = <1>;
 				qcom,support-reset = <0>;
 				qcom,disable-reset = <1>;
-				qcom,pull-up = <1>;
+				qcom,pull-up = <0>;
 				qcom,s1-timer = <0>;
 				qcom,s2-timer = <2000>;
 				qcom,s2-type = <1>;

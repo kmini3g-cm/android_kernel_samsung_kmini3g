@@ -5197,7 +5197,7 @@ static int voice_send_dha_data(struct voice_data *v)
 	vpcm_dha_param_send_cmd.hdr.src_port = voice_get_idx_for_session(v->session_id);
 	vpcm_dha_param_send_cmd.hdr.dest_port = cvp_handle;
 	vpcm_dha_param_send_cmd.hdr.token = 0;
-#ifdef CONFIG_MACH_S3VE3G_EUR
+#if defined(CONFIG_MACH_S3VE3G_EUR) || defined(CONFIG_MACH_MS01_EUR_3G)
 	vpcm_dha_param_send_cmd.hdr.opcode = VSS_ICOMMON_CMD_SET_UI_PROPERTY;
 #else
 	vpcm_dha_param_send_cmd.hdr.opcode = VOICE_CMD_SET_PARAM;
@@ -5261,6 +5261,33 @@ fail:
 int voice_sec_set_dha_data(uint32_t session_id, short mode,
 			short select, short *parameters)
 {
+#if defined(CONFIG_MACH_S3VE3G_EUR) || defined(CONFIG_MACH_MS01_EUR_3G)
+	struct voice_data *v = NULL;
+	int ret = 0;
+	int i = 0;
+	struct voice_session_itr itr;
+	voice_itr_init(&itr, session_id);
+
+	while (voice_itr_get_next_session(&itr, &v)) {
+		if (v != NULL) {
+			mutex_lock(&v->lock);
+			v->sec_dha_data.dha_mode = mode;
+			v->sec_dha_data.dha_select = select;
+			for (i = 0; i < 12; i++)
+				v->sec_dha_data.dha_params[i] = (short)parameters[i];
+			if (is_voc_state_active(v->voc_state) &&
+				(v->lch_mode == 0))
+				ret = voice_send_dha_data(v);
+			mutex_unlock(&v->lock);
+		} else {
+			pr_err("%s: invalid session_id 0x%x\n", __func__,
+				session_id);
+			ret = -EINVAL;
+			break;
+		}
+	}
+
+#else
 	struct voice_data *v = voice_get_session(session_id);
 	int ret = 0;
 	int i;
@@ -5282,10 +5309,11 @@ int voice_sec_set_dha_data(uint32_t session_id, short mode,
 	if (v->voc_state == VOC_RUN)
 		ret = voice_send_dha_data(v);
 		mutex_unlock(&v->lock);
+#endif
 
 	return ret;
-
 }
+
 EXPORT_SYMBOL(voice_sec_set_dha_data);
 #endif /* CONFIG_SEC_DHA_SOL_MAL*/
 
@@ -5779,7 +5807,7 @@ static int32_t qdsp_cvp_callback(struct apr_client_data *data, void *priv)
 			case VSS_IVOCPROC_CMD_DEREGISTER_CALIBRATION_DATA:
 			case VSS_IVOCPROC_CMD_REGISTER_DEVICE_CONFIG:
 			case VSS_IVOCPROC_CMD_DEREGISTER_DEVICE_CONFIG:
-#ifdef CONFIG_MACH_S3VE3G_EUR
+#if defined(CONFIG_MACH_S3VE3G_EUR) || defined(CONFIG_MACH_MS01_EUR_3G)
 			case VSS_ICOMMON_CMD_SET_UI_PROPERTY:
 #endif
 			case VSS_ICOMMON_CMD_MAP_MEMORY:

@@ -555,6 +555,9 @@ struct sec_battery_platform_data {
 	int chg_float_voltage;
 	sec_charger_functions_t chg_functions_setting;
 
+	int siop_level;
+	bool siop_activated;
+
 	/* ADC setting */
 	unsigned int adc_check_count;
 	/* ADC type for each channel */

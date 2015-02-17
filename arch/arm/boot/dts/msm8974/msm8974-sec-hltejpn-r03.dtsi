@@ -128,22 +128,6 @@
 		gpios = <&msmgpio 55 0 /* sda */
 		&msmgpio 56 0 /* scl */
 		>;
-
-		isdbtmm-main1@61 {
-			compatible = "isdbtmm_smtej113_main1";
-			reg = <0x61>;
-		};
-
-		isdbtmm-main2@62 {
-			compatible = "isdbtmm_smtej113_main2";
-			reg = <0x62>;
-		};
-
-		isdbtmm-sub@60 {
-			compatible = "isdbtmm_smtej113_sub";
-			reg = <0x60>;
-		};
-
 	};
 
 	i2c@f9965000 {
@@ -474,6 +458,7 @@
 		spi2 = &spi_2;
 	};
 	spi_2: spi@f9925000 {
+		status = "okay";
 		compatible = "qcom,spi-qup-v2";
 		reg = <0xf9925000 0x1000>, <0xf9904000 0x19000>;
 		reg-names = "spi_physical", "spi_bam_physical";
@@ -1076,6 +1061,10 @@
 	};
 
 	gpio@d900 { /* GPIO 26 */
+		qcom,mode = <0>;		/* QPNP_PIN_MODE_DIG_IN */
+		qcom,pull = <5>;		/* QPNP_PIN_PULL_NO */
+		qcom,vin-sel = <2>;		/* QPNP_PIN_VIN2 */
+		qcom,src-sel = <0>;		/* QPNP_PIN_SEL_FUNC_CONSTANT */
 	};
 
 	gpio@da00 { /* GPIO 27 */

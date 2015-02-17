@@ -1,17 +1,49 @@
 /*
- * super.c
+ * fs/scfs/super.c
+ *
+ * Copyright (C) 2014 Samsung Electronics Co., Ltd.
+ *   Authors: Jongmin Kim <jm45.kim@samsung.com>
+ *            Sangwoo Lee <sangwoo2.lee@samsung.com>
+ *            Inbae Lee   <inbae.lee@samsung.com>
+ *
+ * This program has been developed as a stackable file system based on
+ * the WrapFS, which was written by:
+ *
+ * Copyright (C) 1997-2003 Erez Zadok
+ * Copyright (C) 2001-2003 Stony Brook University
+ * Copyright (C) 2004-2006 International Business Machines Corp.
+ *   Author(s): Michael A. Halcrow <mahalcro@us.ibm.com>
+ *              Michael C. Thompson <mcthomps@us.ibm.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/export.h>
 #include <linux/statfs.h>
 #include <linux/seq_file.h>
 #include "scfs.h"
+#include "../mount.h"
 
+#if MAX_BUFFER_CACHE
 extern struct read_buffer_cache buffer_cache[];
 extern spinlock_t buffer_cache_lock;
+#endif
 
 static struct kobject *scfs_kobj;
-static const char * scfs_version = "v. SCFSLA1";
+static const char * scfs_version = "1.1.3";
+
+extern const char *tfm_names[TOTAL_TYPES];
 
 static ssize_t version_show(struct kobject *kobj,
 			    struct kobj_attribute *attr, char *buf)
@@ -22,9 +54,9 @@ static ssize_t version_show(struct kobject *kobj,
 static struct kobj_attribute version_attr = __ATTR_RO(version);
 
 #ifdef CONFIG_SYSTEM_COMPRESSED
-static const char * system_type = "scfs";
+static const char * system_type = "scfs\n";
 #else
-static const char * system_type = "ext4";
+static const char * system_type = "ext4\n";
 #endif
 
 static ssize_t system_type_show(struct kobject *kobj,
@@ -35,9 +67,31 @@ static ssize_t system_type_show(struct kobject *kobj,
 
 static struct kobj_attribute system_type_attr = __ATTR_RO(system_type);
 
+/* disable bzip for now, crypto_alloc_comp doesn't work for some reason */
+static const char * supported_comp_types = "lzo"
+#if 0 //#ifdef CONFIG_CRYPTO_DEFLATE
+	",bzip2"
+#endif
+#ifdef CONFIG_CRYPTO_ZLIB
+	",zlib"
+#endif
+#ifdef CONFIG_CRYPTO_FASTLZO
+	",fastlzo"
+#endif
+	"\n";
+
+static ssize_t supported_comp_types_show(struct kobject *kobj,
+			    struct kobj_attribute *attr, char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, supported_comp_types);
+}
+
+static struct kobj_attribute supported_comp_types_attr = __ATTR_RO(supported_comp_types);
+
 static struct attribute *attributes[] = {
 	&system_type_attr.attr,
 	&version_attr.attr,
+	&supported_comp_types_attr.attr,
 	NULL,
 };
 
@@ -77,12 +131,9 @@ static void scfs_destroy_inode(struct inode *inode)
 	struct scfs_sb_info *sbi = SCFS_S(inode->i_sb);
 #endif
 
-	if (sii->cinfo_array) {
-		vfree(sii->cinfo_array);
-#if SCFS_PROFILE_MEM
-		atomic_sub(sii->cinfo_array_size, &sbi->vmalloc_size);
-#endif
-	}
+	if (sii->cinfo_array)
+		scfs_cinfo_free(sii, sii->cinfo_array);
+
 	/*
 	if (sii->cluster_buffer.c_buffer)
 		scfs_free_mempool_buffer(sii->cluster_buffer.c_page,
@@ -113,12 +164,9 @@ static void scfs_evict_inode(struct inode *inode)
 #else
 	end_writeback(inode);
 #endif
-	// for save memory, evicted inode won't keep the cluster info
+	/* to conserve memory, evicted inode will throw out the cluster info */
 	if (sii->cinfo_array) {
-		vfree(sii->cinfo_array);
-#if SCFS_PROFILE_MEM
-		atomic_sub(sii->cinfo_array_size, &sbi->vmalloc_size);
-#endif
+		scfs_cinfo_free(sii, sii->cinfo_array);
 		sii->cinfo_array = NULL;
 	}
 	lower_inode = scfs_lower_inode(inode);
@@ -195,12 +243,11 @@ static struct dentry *scfs_mount(struct file_system_type *fs_type, int flags,
 	atomic_add(sizeof(struct scfs_sb_info), &sbi->kmalloc_size);
 #endif
 
-	// setting default values
+	/* set default values */
 	sbi->options.flags |= SCFS_DATA_COMPRESS;
 	sbi->options.comp_threshold = 50;
 	ret = scfs_parse_options(sbi, raw_data);
 	if (ret) {
-		/* parse err */
 		goto out_free;
 	}
 
@@ -264,7 +311,8 @@ static struct dentry *scfs_mount(struct file_system_type *fs_type, int flags,
 	scfs_set_dentry_lower_mnt(sb->s_root, path.mnt);
 
 	/* (oversized) shared mempool for read/write cluster buffers. */
-	//TODO this may fail if we mount too late and memory is too fragmented
+	//TODO this may fail if we mount too late and memory is too fragmented,
+	// or free memory space is low to begin with
 	sbi->mempool = mempool_create_page_pool(SCFS_MEMPOOL_COUNT, 
 		SCFS_MEMPOOL_ORDER);
 	if (!sbi->mempool) {
@@ -272,7 +320,9 @@ static struct dentry *scfs_mount(struct file_system_type *fs_type, int flags,
 		ret = -ENOMEM;
 		goto out_pathput;
 	}
-	
+
+#if MAX_BUFFER_CACHE
+	/* initialize read buffers */	
 	for (i = 0; i < MAX_BUFFER_CACHE; i++) {
 		buffer_cache[i].u_page = scfs_alloc_mempool_buffer(sbi);
 		buffer_cache[i].c_page = scfs_alloc_mempool_buffer(sbi);
@@ -288,9 +338,12 @@ static struct dentry *scfs_mount(struct file_system_type *fs_type, int flags,
 		atomic_set(&buffer_cache[i].is_used, -1);
 	}
 	spin_lock_init(&buffer_cache_lock);
+#endif
 
-	SCFS_PRINT_ALWAYS("%s (mempool %d KB x %d)\n", scfs_version,
-		SCFS_MEMPOOL_SIZE / 1024, SCFS_MEMPOOL_COUNT);
+	SCFS_PRINT_ALWAYS("v.%s\n (mempool:%dKBx%d,dev:%s,comp:%s)\n", 
+		scfs_version,
+		SCFS_MEMPOOL_SIZE / 1024, SCFS_MEMPOOL_COUNT,
+		dev_name, tfm_names[sbi->options.comp_type]);
 
 	sb->s_flags |= MS_ACTIVE;
 	return dget(sb->s_root);
@@ -403,6 +456,50 @@ static void scfs_d_release(struct dentry *dentry)
 	return;
 }
 
+static int scfs_remount_fs(struct super_block *sb, int *flags, char *options)
+{
+	struct super_block *lower_sb = SCFS_S(sb)->lower_sb;
+	struct mount *mnt;
+	struct dentry *dentry;
+	char *dev_name = NULL, *dir_name;
+	int start = PATH_MAX - 1;
+	int ret = -EINVAL;
+	
+	dir_name = kmalloc(PATH_MAX, GFP_KERNEL);
+	if (!dir_name)
+		return -ENOMEM;
+
+	dir_name[start] = '\0';
+	mnt = list_first_entry(&lower_sb->s_mounts, struct mount, mnt_instance);	
+	if (mnt) {
+		dev_name = kstrdup(mnt->mnt_devname, GFP_KERNEL);
+		dentry = mnt->mnt_mountpoint;
+		while (dentry->d_parent != dentry) {
+			start -= dentry->d_name.len;
+			if (start < 0)
+				return -EINVAL;
+
+			memcpy(dir_name + start, dentry->d_name.name, dentry->d_name.len); 
+			dir_name[--start] = '/';
+			dentry = dentry->d_parent;
+			if (dentry->d_parent == dentry && mnt->mnt_parent &&
+				mnt->mnt_parent != mnt) {
+				dentry = mnt->mnt_parent->mnt_mountpoint;
+				mnt = mnt->mnt_parent;
+			}
+		}
+		ret = do_mount(dev_name, dir_name + start, lower_sb->s_id,
+			*flags | MS_REMOUNT, options);
+	} else
+		SCFS_PRINT_ERROR("remount fail, missing mnt\n");
+
+	if (dev_name)
+		kfree(dev_name);
+
+	kfree(dir_name);
+	return ret;
+}
+
 static struct file_system_type scfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "scfs",
@@ -416,7 +513,7 @@ const struct super_operations scfs_sops = {
 	 .destroy_inode		= scfs_destroy_inode,
 	 .evict_inode		= scfs_evict_inode,
 	 .statfs		= scfs_statfs,
-	 .remount_fs		= NULL,
+	 .remount_fs		= scfs_remount_fs,
 	 .show_options		= scfs_show_options,
  };
 
@@ -459,6 +556,58 @@ static void do_sysfs_unregistration(void)
 	kobject_put(scfs_kobj);
 }
 
+#ifdef CONFIG_DEBUG_FS
+
+static struct dentry *scfs_debugfs_root;
+
+static int __init scfs_debugfs_init(void)
+{
+	if (!debugfs_initialized())
+		return -ENODEV;
+
+	scfs_debugfs_root = debugfs_create_dir("scfs", NULL);
+	if (!scfs_debugfs_root)
+		return -ENOMEM;
+
+#ifdef SCFS_ASYNC_READ_PAGES
+	debugfs_create_u64("scfs_readpage_total_count", S_IRUGO,
+		scfs_debugfs_root, &scfs_readpage_total_count);
+
+	debugfs_create_u64("scfs_readpage_io_count", S_IRUGO,
+		scfs_debugfs_root, &scfs_readpage_io_count);
+
+	debugfs_create_u64("scfs_lowerpage_total_count", S_IRUGO,
+		scfs_debugfs_root, &scfs_lowerpage_total_count);
+
+	debugfs_create_u64("scfs_lowerpage_reclaim_count", S_IRUGO,
+		scfs_debugfs_root, &scfs_lowerpage_reclaim_count);
+
+	debugfs_create_u64("scfs_op_mode", S_IRUGO,
+		scfs_debugfs_root, &scfs_op_mode);
+
+	debugfs_create_u64("scfs_sequential_page_number", S_IRUGO | S_IWUGO,
+		scfs_debugfs_root, &scfs_sequential_page_number);
+
+#ifdef CONFIG_SCFS_LOWER_PAGECACHE_INVALIDATION
+	scfs_op_mode |= (1 << SM_LowInval);
+#endif
+#endif
+	return 0;
+}
+
+static void __exit zswap_debugfs_exit(void)
+{
+	debugfs_remove_recursive(scfs_debugfs_root);
+}
+#else
+static inline int __init scfs_debugfs_init(void)
+{
+	return 0;
+}
+
+static inline void __exit scfs_debugfs_exit(void) { }
+#endif
+
 static int __init scfs_init(void)
 {
 	int ret = SCFS_SUCCESS;
@@ -484,6 +633,20 @@ static int __init scfs_init(void)
 	ret = register_filesystem(&scfs_fs_type);
 	if (ret) {
 		SCFS_PRINT_ERROR("failed to register filesystem\n");
+		goto out_destroy_kthread;
+	}
+
+#ifdef SCFS_ASYNC_READ_PAGES
+	ret = smb_init();
+	if (ret) {
+		SCFS_PRINT_ERROR("failed to init scfs memory buffering\n");
+		goto out_destroy_kthread;
+	}
+#endif
+
+	ret = scfs_debugfs_init();
+	if (ret) {
+		SCFS_PRINT_ERROR("failed to scfs_debugfs_init\n");
 		goto out_destroy_kthread;
 	}
 

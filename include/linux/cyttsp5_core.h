@@ -51,6 +51,10 @@ __stringify(CY_DRIVER_NAME)		    \
 /* abs settings */
 #define CY_IGNORE_VALUE             0xFFFF
 
+/* FW VERSION */
+#define CY_HW_VERSION 0x02
+#define CY_FW_VERSION 0x1600
+
 enum cyttsp5_core_platform_flags {
 	CY_CORE_FLAG_NONE,
 	CY_CORE_FLAG_WAKE_ON_GESTURE,
@@ -112,6 +116,15 @@ struct cyttsp5_core_platform_data {
 		struct device *dev);
 	struct touch_settings *sett[CY_TOUCH_SETTINGS_MAX];
 	u32 flags;
+#ifdef CONFIG_SEC_PATEK_PROJECT
+	int tsp_sel;
+	int tsp_sda;
+	int tsp_scl;
+	int cresetb;
+	int num_of_supply;
+	const char **name_of_supply;
+	struct regulator_bulk_data *supplies;
+#endif
 };
 
 struct touch_framework {

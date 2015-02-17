@@ -17,10 +17,15 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/of_gpio.h>
+
+#ifndef SLOW_CHARGING_CURRENT_STANDARD
+
 #if defined(CONFIG_MACH_HEAT_AIO)
 #define SLOW_CHARGING_CURRENT_STANDARD 400
 #else
 #define SLOW_CHARGING_CURRENT_STANDARD 1000
+#endif
+
 #endif
 
 static int smb358_i2c_write(struct i2c_client *client,
@@ -234,8 +239,6 @@ static int smb358_get_charging_status(struct i2c_client *client)
 	u8 data_d = 0;
 	u8 data_e = 0;
 
-	/* need delay to update charger status */
-	msleep(500);
 
 	/*smb358_test_read(client);*/
 
@@ -551,28 +554,25 @@ static void smb358_check_slow_charging(struct work_struct *work)
 				[charger->cable_type].input_current_limit <= SLOW_CHARGING_CURRENT_STANDARD) {
 			charger->is_slow_charging = true;
 	} else {
-		for(i = 0; i < 10; i++) {
+		for(i = 0; i < 20; i++) {
+			if (charger->cable_type ==
+					POWER_SUPPLY_TYPE_BATTERY) {
+				pr_info("%s: cable is removed\n", __func__);
+				return;
+			}
 			msleep(200);
 			smb358_i2c_read(charger->client, SMB358_STATUS_E, &aicl_data);
 			if (aicl_data & 0x10) { /* check AICL complete */
 				break;
 			}
-		}
-		if (i == 10) {
-			pr_err("%s: aicl not complete, retry\n", __func__);
-			/* disable AICL */
-			smb358_set_command(charger->client,
-					SMB358_VARIOUS_FUNCTIONS, 0x81);
-			/* enable AICL */
-			smb358_set_command(charger->client,
-					SMB358_VARIOUS_FUNCTIONS, 0x95);
-			for(i = 0; i < 10; i++) {
-				msleep(200);
-				smb358_i2c_read(charger->client, SMB358_STATUS_E, &aicl_data);
-				pr_err("%s: count: %d\n", __func__, i);
-				if (aicl_data & 0x10) { /* check AICL complete */
-					break;
-				}
+			if (i == 10) {
+				pr_info("%s: aicl not complete, retry\n", __func__);
+				/* disable AICL */
+				smb358_set_command(charger->client,
+						SMB358_VARIOUS_FUNCTIONS, 0x81);
+				/* enable AICL */
+				smb358_set_command(charger->client,
+						SMB358_VARIOUS_FUNCTIONS, 0x95);
 			}
 		}
 
@@ -671,16 +671,21 @@ static void smb358_charger_function_control(
 		smb358_set_command(client, SMB358_FLOAT_VOLTAGE, data);
 		/* Disable Automatic Recharge */
 		smb358_set_command(client, SMB358_CHARGE_CONTROL, 0x84);
-		smb358_set_command(client, SMB358_STAT_TIMERS_CONTROL, 0x0F);
 		smb358_set_command(client, SMB358_PIN_ENABLE_CONTROL, 0x09);
 		smb358_set_command(client, SMB358_THERM_CONTROL_A, 0xF0);
 		smb358_set_command(client, SMB358_SYSOK_USB30_SELECTION, 0x08);
 		smb358_set_command(client, SMB358_OTHER_CONTROL_A, 0x01);
 		smb358_set_command(client, SMB358_OTG_TLIM_THERM_CONTROL, 0xF6);
 		smb358_set_command(client, SMB358_LIMIT_CELL_TEMPERATURE_MONITOR, 0xA5);
-		smb358_set_command(client, SMB358_FAULT_INTERRUPT, 0x00);
 		smb358_set_command(client, SMB358_STATUS_INTERRUPT, 0x00);
 		smb358_set_command(client, SMB358_COMMAND_B, 0x00);
+		if (charger->pdata->chg_irq) {
+			smb358_set_command(client, SMB358_STAT_TIMERS_CONTROL, 0x1F);
+			smb358_set_command(client, SMB358_FAULT_INTERRUPT, 0x0C);
+		} else {
+			smb358_set_command(client, SMB358_STAT_TIMERS_CONTROL, 0x0F);
+			smb358_set_command(client, SMB358_FAULT_INTERRUPT, 0x00);
+		}
 
 	} else {
 		int full_check_type;
@@ -873,16 +878,17 @@ static void smb358_charger_function_control(
 		 * Current Termination disable(bit 6),
 		 * BMD disable(bit 5:4),
 		 * INOK Output Configuration : Push-pull(bit 3)
+		 * AICL glitch filter duration : 20msec(bit 0)
 		 * APSD disable
 		*/
-		data = 0xC1;
+		data = 0xC0;
 
 		switch (full_check_type) {
 		case SEC_BATTERY_FULLCHARGED_CHGGPIO:
 		case SEC_BATTERY_FULLCHARGED_CHGINT:
 		case SEC_BATTERY_FULLCHARGED_CHGPSY:
 			/* Enable Current Termination */
-			data &= 0xB1;
+			data &= 0xBF;
 			break;
 		}
 		smb358_set_command(client,
@@ -914,7 +920,7 @@ static void smb358_charger_function_control(
 		 *    input current for system will be disabled
 		 */
 		smb358_set_command(client,
-			SMB358_OTHER_CONTROL_A, 0x10);
+			SMB358_OTHER_CONTROL_A, 0x11);
 #else
 		/* [STEP - 10] =================================================
 		 * Mininum System Voltage(bit 6) - 3.75v(1)
@@ -952,10 +958,15 @@ static void smb358_charger_function_control(
 			SMB358_LIMIT_CELL_TEMPERATURE_MONITOR, 0x01);
 
 		/* [STEP - 14] ================================================
-		 * FAULT interrupt - Disabled
+		 * FAULT interrupt - Disabled for non chg_irq, OVP enabled for chg_irq
 		*/
-		smb358_set_command(client,
-			SMB358_FAULT_INTERRUPT, 0x00);
+		if (charger->pdata->chg_irq) {
+			smb358_set_command(client,
+				SMB358_FAULT_INTERRUPT, 0x0C);
+		} else {
+			smb358_set_command(client,
+				SMB358_FAULT_INTERRUPT, 0x00);
+		}
 
 		/* [STEP - 15] ================================================
 		 * STATUS interrupt - Clear
@@ -1203,6 +1214,18 @@ bool smb358_hal_chg_set_property(struct i2c_client *client,
 	switch (psp) {
 	/* val->intval : type */
 	case POWER_SUPPLY_PROP_ONLINE:
+		if (val->intval == POWER_SUPPLY_TYPE_POWER_SHARING) {
+			union power_supply_propval ps_status;
+			psy_do_property("ps", get,
+				POWER_SUPPLY_PROP_STATUS, ps_status);
+			if (ps_status.intval) {
+				charger->cable_type = POWER_SUPPLY_TYPE_OTG;
+				pr_info("%s: ps enable\n", __func__);
+			} else {
+				charger->cable_type = POWER_SUPPLY_TYPE_BATTERY;
+				pr_info("%s: ps disable\n", __func__);
+			}
+		}
 		if (charger->cable_type == POWER_SUPPLY_TYPE_OTG) {
 			smb358_charger_otg_control(client);
 		} else if (charger->cable_type == POWER_SUPPLY_TYPE_BATTERY) {
@@ -1335,6 +1358,10 @@ static int smb358_chg_get_property(struct power_supply *psy,
 			dev_info(&charger->client->dev,
 				"%s : AICL completed (%dmA)\n", __func__, aicl_result);
 			charger->charging_current_max = aicl_result;
+		} else {
+			dev_info(&charger->client->dev,
+				"%s : AICL is not completed \n", __func__);
+			charger->charging_current_max = 300;
 		}
 		val->intval = charger->charging_current_max;
 		break;
@@ -1372,7 +1399,8 @@ static int smb358_chg_set_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_ONLINE:
 		charger->cable_type = val->intval;
 		if (val->intval == POWER_SUPPLY_TYPE_BATTERY || \
-				val->intval == POWER_SUPPLY_TYPE_OTG) {
+				val->intval == POWER_SUPPLY_TYPE_OTG || \
+				val->intval == POWER_SUPPLY_TYPE_POWER_SHARING) {
 			charger->is_charging = false;
 			charger->is_slow_charging = false;
 		}
@@ -1528,6 +1556,8 @@ static void smb358_chg_isr_work(struct work_struct *work)
 		case POWER_SUPPLY_HEALTH_GOOD:
 			dev_err(&charger->client->dev,
 				"%s: Interrupted but Good\n", __func__);
+			psy_do_property("battery", set,
+				POWER_SUPPLY_PROP_HEALTH, val);
 			break;
 
 		case POWER_SUPPLY_HEALTH_UNKNOWN:
@@ -1550,8 +1580,10 @@ static void smb358_chg_isr_work(struct work_struct *work)
 		if (get_power_supply_by_name("battery")) {
 			psy_do_property("battery", set,
 				POWER_SUPPLY_PROP_ONLINE, val);
-		} else
-			charger->pdata->check_cable_result_callback(val.intval);
+		} else {
+			if (charger->pdata->check_cable_result_callback)
+				charger->pdata->check_cable_result_callback(val.intval);
+		}
 	}
 }
 
@@ -1680,6 +1712,19 @@ static int smb358_charger_parse_dt(struct sec_charger_info *charger)
 					&pdata->ovp_uvlo_check_type);
 		if (ret < 0)
 			pr_err("%s: ovp_uvlo_check_type read failed (%d)\n", __func__, ret);
+
+		ret = of_get_named_gpio(np, "battery,chg_int", 0);
+		if (ret > 0) {
+			pdata->chg_irq = gpio_to_irq(ret);
+			pr_info("%s reading chg_int_gpio = %d\n", __func__, ret);
+		} else {
+			pr_info("%s reading chg_int_gpio is empty\n", __func__);
+		}
+
+		ret = of_property_read_u32(np, "battery,chg_irq_attr",
+					(unsigned int *)&pdata->chg_irq_attr);
+		if (ret)
+			pr_info("%s: chg_irq_attr is Empty\n", __func__);
 
 		ret = of_property_read_u32(np, "battery,full_check_type",
 					&pdata->full_check_type);

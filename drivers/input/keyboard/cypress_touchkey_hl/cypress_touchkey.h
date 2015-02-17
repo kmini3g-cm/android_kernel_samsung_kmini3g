@@ -87,7 +87,13 @@
 #define TK_HAS_FIRMWARE_UPDATE
 #define TK_UPDATABLE_BD_ID	0
 
+#if defined(CONFIG_SEC_S_PROJECT)
+#define TK_USE_RECENT
+#define FW_PATH "tkey/s_cypress_tkey.fw"
+#else
 #define FW_PATH "tkey/fresco_n_cypress_tkey.fw"
+#endif
+
 #define TKEY_MODULE07_HWID 8
 #define TKEY_FW_PATH "/sdcard/cypress/fw.bin"
 

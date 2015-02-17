@@ -44,7 +44,7 @@
 #include <linux/interrupt.h>
 #include <linux/clk.h>
 #endif
-#ifdef CONFIG_SEC_NFC_USE_8226_BBCLK2
+#if defined(CONFIG_NFC_N5_PMC8974_CLK_REQ) || defined(CONFIG_SEC_NFC_USE_8226_BBCLK2)
 #include <linux/clk.h>
 #endif
 
@@ -306,8 +306,9 @@ int sec_nfc_i2c_probe(struct i2c_client *client)
 	mutex_init(&info->i2c_info.read_mutex);
 	init_waitqueue_head(&info->i2c_info.read_wait);
 	i2c_set_clientdata(client, info);
+#if !defined(CONFIG_MACH_KSPORTSLTE_SPR)
 	nfc_power_onoff(info,1);
-
+#endif
 	ret = request_threaded_irq(client->irq, NULL, sec_nfc_irq_thread_fn,
 			IRQF_TRIGGER_RISING | IRQF_ONESHOT, SEC_NFC_DRIVER_NAME,
 			info);
@@ -585,10 +586,11 @@ int nfc_power_onoff(struct sec_nfc_info *data, bool onoff)
 				__func__, ret);
 			return ret;
 		}
-*/		
+*/
 	}
 
 	if(onoff){
+#if !defined(CONFIG_MACH_ATLANTICLTE_VZW) && !defined(CONFIG_MACH_ATLANTICLTE_ATT) && !defined(CONFIG_MACH_ATLANTICLTE_USC)
 		ret = regulator_enable(data->L22);
 		regulator_set_mode(data->L22, REGULATOR_MODE_NORMAL);
 		if (ret) {
@@ -596,6 +598,7 @@ int nfc_power_onoff(struct sec_nfc_info *data, bool onoff)
 				__func__);
 			return ret;
 		}
+#endif
 
 		ret = regulator_enable(data->L6);
 		if (ret) {
@@ -606,14 +609,16 @@ int nfc_power_onoff(struct sec_nfc_info *data, bool onoff)
 
 	}
 	else {
+#if !defined(CONFIG_MACH_ATLANTICLTE_VZW) && !defined(CONFIG_MACH_ATLANTICLTE_ATT) && !defined(CONFIG_MACH_ATLANTICLTE_USC)
 		ret = regulator_disable(data->L22);
 		if (ret) {
 			pr_err("%s: Failed to disable regulatorL22.\n",
 				__func__);
 			return ret;
 		}
+#endif
 
-		ret = regulator_enable(data->L6);
+		ret = regulator_disable(data->L6);
 		if (ret) {
 			pr_err("%s: Failed to disable regulator L6.\n",
 				__func__);
@@ -637,14 +642,18 @@ static int sec_nfc_suspend(struct device *dev)
 
 	mutex_unlock(&info->mutex);
 
+#if !defined(CONFIG_MACH_KSPORTSLTE_SPR)
 	nfc_power_onoff(info,0);
+#endif
 	return ret;
 }
 
 static int sec_nfc_resume(struct device *dev)
 {
+#if !defined(CONFIG_MACH_KSPORTSLTE_SPR)
 	struct sec_nfc_info *info = SEC_NFC_GET_INFO(dev);
 	nfc_power_onoff(info,1);
+#endif
 	return 0;
 }
 
@@ -674,7 +683,11 @@ static int sec_nfc_parse_dt(struct device *dev,
 		0, &pdata->irq_gpio_flags);
 #endif
 #endif
-
+	if (pdata->firm < 0)
+		of_property_read_u32(np, "sec-nfc,firm-expander-gpio", &pdata->firm);
+	pdata->wake = pdata->firm;
+	pr_info("%s: irq : %d, ven : %d, firm : %d\n",
+			__func__, pdata->irq, pdata->ven, pdata->firm);
 	return 0;
 }
 #else
@@ -714,6 +727,18 @@ static int __sec_nfc_probe(struct device *dev)
 
 #ifdef CONFIG_SEC_NFC_USE_8226_BBCLK2
 	pdata->nfc_clk = clk_get(NULL, "nfc_clock");
+	if (IS_ERR(pdata->nfc_clk)) {
+		ret = PTR_ERR(pdata->nfc_clk);
+		printk(KERN_ERR "%s: Couldn't get D1 (%d)\n",
+					__func__, ret);
+	} else {
+		if (clk_prepare_enable(pdata->nfc_clk))
+			printk(KERN_ERR "%s: Couldn't prepare D1\n",
+					__func__);
+	}
+#endif
+#ifdef CONFIG_NFC_N5_PMC8974_CLK_REQ
+	pdata->nfc_clk = clk_get(NULL, "nfc_clk");
 	if (IS_ERR(pdata->nfc_clk)) {
 		ret = PTR_ERR(pdata->nfc_clk);
 		printk(KERN_ERR "%s: Couldn't get D1 (%d)\n",
@@ -787,7 +812,7 @@ static int __sec_nfc_remove(struct device *dev)
 	struct sec_nfc_platform_data *pdata = info->pdata;
 
 	dev_dbg(info->dev, "%s\n", __func__);
-#ifdef CONFIG_SEC_NFC_USE_8226_BBCLK2
+#if defined(CONFIG_NFC_N5_PMC8974_CLK_REQ) || defined(CONFIG_SEC_NFC_USE_8226_BBCLK2)
 	if (pdata->nfc_clk)
 		clk_unprepare(pdata->nfc_clk);
 #endif

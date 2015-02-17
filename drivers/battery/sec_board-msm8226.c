@@ -37,11 +37,16 @@ extern int check_sm5502_jig_state(void);
 static struct battery_data_t samsung_battery_data[] = {
   /* SDI battery data (High voltage 4.35V) */
   {
-#if defined(CONFIG_MACH_AFYONLTE_TMO)
-    .RCOMP0 = 0x4A,
-    .RCOMP_charging = 0x4A,
+#if defined(CONFIG_MACH_AFYONLTE_TMO) || defined(CONFIG_MACH_AFYONLTE_CAN)
+    .RCOMP0 = 0x55,
+    .RCOMP_charging = 0x55,
     .temp_cohot = -75,
     .temp_cocold = -4700,
+#elif defined(CONFIG_SEC_ATLANTICLTE_COMMON)
+    .RCOMP0 = 0x60,
+    .RCOMP_charging = 0x60,
+    .temp_cohot = -1300,
+    .temp_cocold = -7500,
 #else
     .RCOMP0 = 0x74,
     .RCOMP_charging = 0x8D,
@@ -60,9 +65,32 @@ static struct battery_data_t samsung_battery_data[] = {
     .Capacity = 0x2198, /* Millet : 4300mAh */
 #elif defined(CONFIG_SEC_MATISSE_PROJECT)
     .Capacity = 0x32CD, /* Matisse: 6502mAh */
+#elif defined(CONFIG_MACH_DEGASLTE_SPR)
+    .Capacity = 0x1F1E, /* Degas*/
 #else
     .Capacity = 0x4A38, /* V1/V2: 9500mAh */
 #endif
+#if defined(CONFIG_SEC_MILLET_PROJECT)
+    .low_battery_comp_voltage = 3450,
+    .low_battery_table = {
+      /* range, slope, offset */
+      {-5000, 0,  0}, /* dummy for top limit */
+      {-1250, 0,  3290},
+      {-750, 97,  3400},
+      {-100, 96,  3410},
+      {0, 0,  3406},
+    },
+#elif defined(CONFIG_MACH_DEGASLTE_SPR)
+    .low_battery_comp_voltage = 3450,
+    .low_battery_table = {
+      /* range, slope, offset */
+      {-5000, 0,  0}, /* dummy for top limit */
+      {-1250, 0,  3290},
+      {-750, 97,  3400},
+      {-100, 96,  3410},
+      {0, 0,  3406},
+    },
+#else
     .low_battery_comp_voltage = 3500,
     .low_battery_table = {
       /* range, slope, offset */
@@ -72,6 +100,7 @@ static struct battery_data_t samsung_battery_data[] = {
       {-100, 96,  3461},
       {0, 0,  3456},
     },
+#endif
     .temp_adjust_table = {
       /* range, slope, offset */
       {47000, 122,  8950},
@@ -93,29 +122,81 @@ static void * samsung_battery_data;
 static enum qpnp_vadc_channels temp_channel;
 static struct sec_fuelgauge_info *sec_fuelgauge =  NULL;
 
-#if defined(CONFIG_MACH_AFYONLTE_TMO)
-#define TEMP_HIGH_THRESHOLD_EVENT  620
-#define TEMP_HIGH_RECOVERY_EVENT   480
+#if defined(CONFIG_MACH_AFYONLTE_TMO) || defined(CONFIG_MACH_AFYONLTE_CAN)
+#define TEMP_HIGH_THRESHOLD_EVENT  702
+#define TEMP_HIGH_RECOVERY_EVENT   462
 #define TEMP_LOW_THRESHOLD_EVENT   (-33)
 #define TEMP_LOW_RECOVERY_EVENT    10
-#define TEMP_HIGH_THRESHOLD_NORMAL 520
-#define TEMP_HIGH_RECOVERY_NORMAL  470
-#define TEMP_LOW_THRESHOLD_NORMAL  (-33)
-#define TEMP_LOW_RECOVERY_NORMAL   10
+#define TEMP_HIGH_THRESHOLD_NORMAL 612
+#define TEMP_HIGH_RECOVERY_NORMAL  462
+#define TEMP_LOW_THRESHOLD_NORMAL  (-45)
+#define TEMP_LOW_RECOVERY_NORMAL   (-4)
 #define TEMP_HIGH_THRESHOLD_LPM    520
 #define TEMP_HIGH_RECOVERY_LPM     480
 #define TEMP_LOW_THRESHOLD_LPM     (-40)
 #define TEMP_LOW_RECOVERY_LPM      (-5)
-#elif defined(CONFIG_MACH_MATISSELTE_ATT)|| defined(CONFIG_MACH_MATISSELTE_VZW) || defined(CONFIG_MACH_MATISSELTE_USC)
+#elif defined(CONFIG_MACH_ATLANTICLTE_ATT)
+#define TEMP_HIGH_THRESHOLD_EVENT  640
+#define TEMP_HIGH_RECOVERY_EVENT   490
+#define TEMP_LOW_THRESHOLD_EVENT   (-40)
+#define TEMP_LOW_RECOVERY_EVENT    (-10)
+#define TEMP_HIGH_THRESHOLD_NORMAL 525
+#define TEMP_HIGH_RECOVERY_NORMAL  470
+#define TEMP_LOW_THRESHOLD_NORMAL  (-25)
+#define TEMP_LOW_RECOVERY_NORMAL   (-10)
+#define TEMP_HIGH_THRESHOLD_LPM    520
+#define TEMP_HIGH_RECOVERY_LPM     470
+#define TEMP_LOW_THRESHOLD_LPM     (-15)
+#define TEMP_LOW_RECOVERY_LPM      (-10)
+#elif defined(CONFIG_MACH_DEGASLTE_SPR)
+#define TEMP_HIGH_THRESHOLD_EVENT  620
+#define TEMP_HIGH_RECOVERY_EVENT   480
+#define TEMP_LOW_THRESHOLD_EVENT   (-50)
+#define TEMP_LOW_RECOVERY_EVENT    0
+#define TEMP_HIGH_THRESHOLD_NORMAL 500
+#define TEMP_HIGH_RECOVERY_NORMAL  470
+#define TEMP_LOW_THRESHOLD_NORMAL  (-50)
+#define TEMP_LOW_RECOVERY_NORMAL   0
+#define TEMP_HIGH_THRESHOLD_LPM    500
+#define TEMP_HIGH_RECOVERY_LPM     495
+#define TEMP_LOW_THRESHOLD_LPM     (-30)
+#define TEMP_LOW_RECOVERY_LPM      20
+#elif defined(CONFIG_MACH_MATISSELTE_VZW)
 #define TEMP_HIGH_THRESHOLD_EVENT  590
 #define TEMP_HIGH_RECOVERY_EVENT   500
 #define TEMP_LOW_THRESHOLD_EVENT   (-50)
 #define TEMP_LOW_RECOVERY_EVENT    0
 #define TEMP_HIGH_THRESHOLD_NORMAL 545
 #define TEMP_HIGH_RECOVERY_NORMAL  475
-#define TEMP_LOW_THRESHOLD_NORMAL  (-15)
+#define TEMP_LOW_THRESHOLD_NORMAL  (-50)
 #define TEMP_LOW_RECOVERY_NORMAL   0
-#define TEMP_HIGH_THRESHOLD_LPM    520
+#define TEMP_HIGH_THRESHOLD_LPM    510
+#define TEMP_HIGH_RECOVERY_LPM     500
+#define TEMP_LOW_THRESHOLD_LPM     (-10)
+#define TEMP_LOW_RECOVERY_LPM      0
+#elif defined(CONFIG_MACH_MATISSELTE_USC)
+#define TEMP_HIGH_THRESHOLD_EVENT  535
+#define TEMP_HIGH_RECOVERY_EVENT   500
+#define TEMP_LOW_THRESHOLD_EVENT   (-50)
+#define TEMP_LOW_RECOVERY_EVENT    0
+#define TEMP_HIGH_THRESHOLD_NORMAL 545
+#define TEMP_HIGH_RECOVERY_NORMAL  475
+#define TEMP_LOW_THRESHOLD_NORMAL  (-50)
+#define TEMP_LOW_RECOVERY_NORMAL   0
+#define TEMP_HIGH_THRESHOLD_LPM    510
+#define TEMP_HIGH_RECOVERY_LPM     500
+#define TEMP_LOW_THRESHOLD_LPM     (-10)
+#define TEMP_LOW_RECOVERY_LPM      0
+#elif defined(CONFIG_MACH_MATISSELTE_ATT)
+#define TEMP_HIGH_THRESHOLD_EVENT  590
+#define TEMP_HIGH_RECOVERY_EVENT   500
+#define TEMP_LOW_THRESHOLD_EVENT   (-50)
+#define TEMP_LOW_RECOVERY_EVENT    0
+#define TEMP_HIGH_THRESHOLD_NORMAL 545
+#define TEMP_HIGH_RECOVERY_NORMAL  475
+#define TEMP_LOW_THRESHOLD_NORMAL  (-40)
+#define TEMP_LOW_RECOVERY_NORMAL   0
+#define TEMP_HIGH_THRESHOLD_LPM    510
 #define TEMP_HIGH_RECOVERY_LPM     500
 #define TEMP_LOW_THRESHOLD_LPM     (-10)
 #define TEMP_LOW_RECOVERY_LPM      0
@@ -126,27 +207,66 @@ static struct sec_fuelgauge_info *sec_fuelgauge =  NULL;
 #define TEMP_LOW_RECOVERY_EVENT    0
 #define TEMP_HIGH_THRESHOLD_NORMAL 530
 #define TEMP_HIGH_RECOVERY_NORMAL  460
-#define TEMP_LOW_THRESHOLD_NORMAL  (-20)
+#define TEMP_LOW_THRESHOLD_NORMAL  (-50)
 #define TEMP_LOW_RECOVERY_NORMAL   0
 #define TEMP_HIGH_THRESHOLD_LPM    510
 #define TEMP_HIGH_RECOVERY_LPM     490
 #define TEMP_LOW_THRESHOLD_LPM     0
 #define TEMP_LOW_RECOVERY_LPM      5
-#elif defined(CONFIG_MACH_MILLETLTE_VZW)  || defined(CONFIG_MACH_MILLETWIFIUS_OPEN)
+#elif defined(CONFIG_MACH_MILLETLTE_VZW)
 #define TEMP_HIGH_THRESHOLD_EVENT  645
-#define TEMP_HIGH_RECOVERY_EVENT   505
+#define TEMP_HIGH_RECOVERY_EVENT   460
 #define TEMP_LOW_THRESHOLD_EVENT   (-50)
 #define TEMP_LOW_RECOVERY_EVENT    0
 #define TEMP_HIGH_THRESHOLD_NORMAL 555
-#define TEMP_HIGH_RECOVERY_NORMAL  505
+#define TEMP_HIGH_RECOVERY_NORMAL  460
 #define TEMP_LOW_THRESHOLD_NORMAL  (-50)
 #define TEMP_LOW_RECOVERY_NORMAL   0
 #define TEMP_HIGH_THRESHOLD_LPM    510
 #define TEMP_HIGH_RECOVERY_LPM     460
 #define TEMP_LOW_THRESHOLD_LPM     (-40)
 #define TEMP_LOW_RECOVERY_LPM      0
+#elif defined(CONFIG_MACH_MILLETLTE_ATT)
+#define TEMP_HIGH_THRESHOLD_EVENT  560
+#define TEMP_HIGH_RECOVERY_EVENT   475
+#define TEMP_LOW_THRESHOLD_EVENT   (-40)
+#define TEMP_LOW_RECOVERY_EVENT    10
+#define TEMP_HIGH_THRESHOLD_NORMAL 555
+#define TEMP_HIGH_RECOVERY_NORMAL  475
+#define TEMP_LOW_THRESHOLD_NORMAL  (-40)
+#define TEMP_LOW_RECOVERY_NORMAL   10
+#define TEMP_HIGH_THRESHOLD_LPM    525
+#define TEMP_HIGH_RECOVERY_LPM     470
+#define TEMP_LOW_THRESHOLD_LPM     (-25)
+#define TEMP_LOW_RECOVERY_LPM      10
+#elif defined(CONFIG_MACH_MILLETLTE_CAN) || defined(CONFIG_MACH_MILLETLTE_TMO)
+#define TEMP_HIGH_THRESHOLD_EVENT  645
+#define TEMP_HIGH_RECOVERY_EVENT   475
+#define TEMP_LOW_THRESHOLD_EVENT   (-40)
+#define TEMP_LOW_RECOVERY_EVENT    10
+#define TEMP_HIGH_THRESHOLD_NORMAL 555
+#define TEMP_HIGH_RECOVERY_NORMAL  475
+#define TEMP_LOW_THRESHOLD_NORMAL  (-40)
+#define TEMP_LOW_RECOVERY_NORMAL   10
+#define TEMP_HIGH_THRESHOLD_LPM    525
+#define TEMP_HIGH_RECOVERY_LPM     470
+#define TEMP_LOW_THRESHOLD_LPM     (-25)
+#define TEMP_LOW_RECOVERY_LPM      10
+#elif defined(CONFIG_MACH_MILLETWIFIUS_OPEN)
+#define TEMP_HIGH_THRESHOLD_EVENT  610
+#define TEMP_HIGH_RECOVERY_EVENT   470
+#define TEMP_LOW_THRESHOLD_EVENT   0
+#define TEMP_LOW_RECOVERY_EVENT    30
+#define TEMP_HIGH_THRESHOLD_NORMAL 510
+#define TEMP_HIGH_RECOVERY_NORMAL  470
+#define TEMP_LOW_THRESHOLD_NORMAL  0
+#define TEMP_LOW_RECOVERY_NORMAL   30
+#define TEMP_HIGH_THRESHOLD_LPM    510
+#define TEMP_HIGH_RECOVERY_LPM     480
+#define TEMP_LOW_THRESHOLD_LPM     0
+#define TEMP_LOW_RECOVERY_LPM      30
 #elif defined(CONFIG_SEC_MATISSE_PROJECT)
-#define TEMP_HIGH_THRESHOLD_EVENT  530
+#define TEMP_HIGH_THRESHOLD_EVENT  540
 #define TEMP_HIGH_RECOVERY_EVENT   460
 #define TEMP_LOW_THRESHOLD_EVENT   (-50)
 #define TEMP_LOW_RECOVERY_EVENT    0
@@ -158,6 +278,58 @@ static struct sec_fuelgauge_info *sec_fuelgauge =  NULL;
 #define TEMP_HIGH_RECOVERY_LPM     490
 #define TEMP_LOW_THRESHOLD_LPM     0
 #define TEMP_LOW_RECOVERY_LPM      5
+#elif defined(CONFIG_MACH_MILLET3G_CHN_OPEN)
+#define TEMP_HIGH_THRESHOLD_EVENT  600
+#define TEMP_HIGH_RECOVERY_EVENT   460
+#define TEMP_LOW_THRESHOLD_EVENT   (-50)
+#define TEMP_LOW_RECOVERY_EVENT    0
+#define TEMP_HIGH_THRESHOLD_NORMAL 520
+#define TEMP_HIGH_RECOVERY_NORMAL  460
+#define TEMP_LOW_THRESHOLD_NORMAL  (-50)
+#define TEMP_LOW_RECOVERY_NORMAL   0
+#define TEMP_HIGH_THRESHOLD_LPM    520
+#define TEMP_HIGH_RECOVERY_LPM     460
+#define TEMP_LOW_THRESHOLD_LPM     (-50)
+#define TEMP_LOW_RECOVERY_LPM      0
+#elif defined(CONFIG_SEC_VICTOR_PROJECT)
+#define TEMP_HIGH_THRESHOLD_EVENT  600
+#define TEMP_HIGH_RECOVERY_EVENT   460
+#define TEMP_LOW_THRESHOLD_EVENT   (-50)
+#define TEMP_LOW_RECOVERY_EVENT    0
+#define TEMP_HIGH_THRESHOLD_NORMAL 600
+#define TEMP_HIGH_RECOVERY_NORMAL  460
+#define TEMP_LOW_THRESHOLD_NORMAL  (-50)
+#define TEMP_LOW_RECOVERY_NORMAL   0
+#define TEMP_HIGH_THRESHOLD_LPM    600
+#define TEMP_HIGH_RECOVERY_LPM     460
+#define TEMP_LOW_THRESHOLD_LPM     (-50)
+#define TEMP_LOW_RECOVERY_LPM      0
+#elif defined(CONFIG_SEC_ATLANTIC3G_COMMON)
+#define TEMP_HIGH_THRESHOLD_EVENT  600
+#define TEMP_HIGH_RECOVERY_EVENT   460
+#define TEMP_LOW_THRESHOLD_EVENT   (-50)
+#define TEMP_LOW_RECOVERY_EVENT    0
+#define TEMP_HIGH_THRESHOLD_NORMAL 600
+#define TEMP_HIGH_RECOVERY_NORMAL  460
+#define TEMP_LOW_THRESHOLD_NORMAL  (-50)
+#define TEMP_LOW_RECOVERY_NORMAL   0
+#define TEMP_HIGH_THRESHOLD_LPM    600
+#define TEMP_HIGH_RECOVERY_LPM     460
+#define TEMP_LOW_THRESHOLD_LPM     (-50)
+#define TEMP_LOW_RECOVERY_LPM      0
+#elif defined(CONFIG_SEC_MEGA2_PROJECT)
+#define TEMP_HIGH_THRESHOLD_EVENT  600
+#define TEMP_HIGH_RECOVERY_EVENT   460
+#define TEMP_LOW_THRESHOLD_EVENT   (-50)
+#define TEMP_LOW_RECOVERY_EVENT    0
+#define TEMP_HIGH_THRESHOLD_NORMAL 600
+#define TEMP_HIGH_RECOVERY_NORMAL  460
+#define TEMP_LOW_THRESHOLD_NORMAL  (-50)
+#define TEMP_LOW_RECOVERY_NORMAL   0
+#define TEMP_HIGH_THRESHOLD_LPM    600
+#define TEMP_HIGH_RECOVERY_LPM     460
+#define TEMP_LOW_THRESHOLD_LPM     (-50)
+#define TEMP_LOW_RECOVERY_LPM      0
 #else
 #define TEMP_HIGH_THRESHOLD_EVENT  520
 #define TEMP_HIGH_RECOVERY_EVENT   460
@@ -173,8 +345,11 @@ static struct sec_fuelgauge_info *sec_fuelgauge =  NULL;
 #define TEMP_LOW_RECOVERY_LPM      0
 #endif
 
-#if defined(CONFIG_MACH_AFYONLTE_TMO)
+#if defined(CONFIG_MACH_AFYONLTE_TMO) || defined(CONFIG_MACH_AFYONLTE_CAN)
 static sec_bat_adc_table_data_t temp_table[] = {
+  {26390, 800},
+  {26780, 750},
+  {27182, 700},
   {27604, 650},
   {28080, 600},
   {28628, 550},
@@ -210,6 +385,68 @@ static sec_bat_adc_table_data_t temp_table[] = {
   {41173, -150},
   {41667, -200},
 };
+#elif defined(CONFIG_MACH_ATLANTICLTE_ATT)
+static sec_bat_adc_table_data_t temp_table[] = {
+  {26050, 900},
+  {26273, 850},
+  {26524, 800},
+  {26847, 750},
+  {27037, 700},
+  {27456, 650},
+  {27942, 600},
+  {28513, 550},
+  {28890, 520},
+  {29150, 500},
+  {29595, 470},
+  {29903, 450},
+  {30773, 400},
+  {31738, 350},
+  {32758, 300},
+  {33836, 250},
+  {34871, 200},
+  {36007, 150},
+  {37110, 100},
+  {38207, 50},
+  {39164, 0},
+  {39558, -20},
+  {40054, -50},
+  {40696, -100},
+  {41294, -150},
+  {41828, -200},
+};
+#elif defined(CONFIG_MACH_DEGASLTE_SPR)
+static sec_bat_adc_table_data_t temp_table[] = {
+  {26800, 650},
+  {27400, 600},
+  {28100, 550},
+  {28400, 530},
+  {28710, 510},
+  {28869, 500},
+  {28980, 490},
+  {29120, 480},
+  {29354, 460},
+  {29670, 440},
+  {30841, 400},
+  {31766, 350},
+  {32700, 300},
+  {33827, 250},
+  {34936, 200},
+  {35990, 150},
+  {36558, 130},
+  {36800, 100},
+  {37020, 80},
+  {37455, 50},
+  {38020, 30},
+  {38420, 10},
+  {38639, 0},
+  {38865, -10},
+  {39321, -30},
+  {39589, -50},
+  {40281, -70},
+  {40468, -100},
+  {41039, -150},
+  {41595, -200},
+};
 #elif defined(CONFIG_MACH_MILLETLTE_VZW)
 static sec_bat_adc_table_data_t temp_table[] = {
   {25950, 900},
@@ -235,6 +472,65 @@ static sec_bat_adc_table_data_t temp_table[] = {
   {40286, -100},
   {40894, -150},
   {41448, -200},
+};
+#elif defined(CONFIG_MACH_MILLETLTE_ATT) || defined(CONFIG_MACH_MILLETLTE_CAN) || defined(CONFIG_MACH_MILLETLTE_TMO)
+static sec_bat_adc_table_data_t temp_table[] = {
+  {26050, 900},
+  {26283, 850},
+  {26497, 800},
+  {26800, 750},
+  {27161, 700},
+  {27524, 650},
+  {27981, 600},
+  {28527, 550},
+  {28884, 520},
+  {29173, 500},
+  {29576, 470},
+  {29864, 450},
+  {30741, 400},
+  {31677, 350},
+  {32679, 300},
+  {33743, 250},
+  {34833, 200},
+  {35940, 150},
+  {37012, 100},
+  {38083, 50},
+  {39019, 0},
+  {39360, -20},
+  {39888, -50},
+  {40495, -100},
+  {41117, -150},
+  {41671, -200},
+};
+#elif defined(CONFIG_MACH_MILLET3G_CHN_OPEN)
+static sec_bat_adc_table_data_t temp_table[] = {
+  {26437, 900},
+  {27225, 800},
+  {28019, 700},
+  {28531, 650},
+  {28738, 620},
+  {29025, 600},
+  {29126, 580},
+  {29570, 550},
+  {30158, 500},
+  {30420, 470},
+  {30808, 450},
+  {30953, 430},
+  {31500, 400},
+  {32149, 350},
+  {32924, 300},
+  {33849, 250},
+  {34775, 200},
+  {35694, 150},
+  {36545, 100},
+  {37402, 50},
+  {37820, 20},
+  {38215, 0},
+  {38727, -30},
+  {38957, -50},
+  {39618, -100},
+  {40303, -150},
+  {40584, -200},
 };
 #elif defined(CONFIG_SEC_MILLET_PROJECT)
 static sec_bat_adc_table_data_t temp_table[] = {
@@ -266,7 +562,6 @@ static sec_bat_adc_table_data_t temp_table[] = {
   {40303, -150},
   {40584, -200},
 };
-
 #elif defined(CONFIG_MACH_MATISSELTE_ATT)
 static sec_bat_adc_table_data_t temp_table[] = {
   {32938, 700},
@@ -344,6 +639,88 @@ static sec_bat_adc_table_data_t temp_table[] = {
   {39626, -100},
   {40212, -150},
   {40795, -200},
+};
+#elif defined(CONFIG_SEC_VICTOR_PROJECT)
+static sec_bat_adc_table_data_t temp_table[] = {
+  {26500, 800},
+  {26757, 750},
+  {27122, 700},
+  {27542, 650},
+  {28028, 600},
+  {28604, 550},
+  {29290, 500},
+  {29994, 450},
+  {30854, 400},
+  {31718, 350},
+  {32748, 300},
+  {33805, 250},
+  {34969, 200},
+  {36039, 150},
+  {37081, 100},
+  {38087, 50},
+  {38997, 0},
+  {39186, -10},
+  {39353, -20},
+  {39519, -30},
+  {39828, -50},
+  {40552, -100},
+  {41143, -150},
+  {41626, -200},
+};
+#elif defined(CONFIG_SEC_BERLUTI_PROJECT)
+static sec_bat_adc_table_data_t temp_table[] = {
+  {25463, 900},
+  {25933, 850},
+  {26405, 800},
+  {26735, 750},
+  {27065, 700},
+  {27545, 650},
+  {28027, 600},
+  {28549, 550},
+  {29183, 500},
+  {29932, 450},
+  {30771, 400},
+  {31735, 350},
+  {32673, 300},
+  {33748, 250},
+  {34828, 200},
+  {35928, 150},
+  {37030, 100},
+  {37990, 50},
+  {38958, 0},
+  {39807, -50},
+  {40454, -100},
+  {41034, -150},
+  {41614, -200},
+};
+#elif defined(CONFIG_SEC_ATLANTIC3G_COMMON)
+static sec_bat_adc_table_data_t temp_table[] = {
+  {26050, 920},
+  {26273, 870},
+  {26524, 820},
+  {26847, 770},
+  {27037, 720},
+  {27456, 670},
+  {27823, 620},
+  {28400, 570},
+  {28890, 540},
+  {28976, 520},
+  {29417, 490},
+  {29704, 470},
+  {30519, 420},
+  {31368, 370},
+  {32492, 320},
+  {33460, 270},
+  {34895, 220},
+  {35670, 170},
+  {36752, 120},
+  {37724, 70},
+  {38645, 2},
+  {39005, 0},
+  {39490, -30},
+  {40696, -80},
+  {41294, -130},
+  {41828, -180},
 };
 #else
 static sec_bat_adc_table_data_t temp_table[] = {
@@ -531,7 +908,7 @@ void adc_exit(struct sec_battery_info *battery)
 
 bool sec_bat_check_jig_status(void)
 {
-#if defined(CONFIG_MACH_AFYONLTE_TMO)
+#if defined(CONFIG_MACH_AFYONLTE_TMO) || defined(CONFIG_MACH_AFYONLTE_CAN)
 	return check_jig_state();
 #elif defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_MILLET_PROJECT)
 	return check_sm5502_jig_state();
@@ -617,7 +994,8 @@ void board_battery_init(struct platform_device *pdev, struct sec_battery_info *b
   battery->pdata->temp_low_threshold_lpm = TEMP_LOW_THRESHOLD_LPM;
   battery->pdata->temp_low_recovery_lpm = TEMP_LOW_RECOVERY_LPM;
 
-#if defined(CONFIG_MACH_MATISSELTE_ATT) || defined(CONFIG_MACH_MATISSELTE_VZW) || defined(CONFIG_MACH_MILLETLTE_VZW) || defined(CONFIG_MACH_MATISSELTE_USC)
+#if defined(CONFIG_MACH_MATISSELTE_ATT) || defined(CONFIG_MACH_MATISSELTE_VZW) \
+|| defined(CONFIG_MACH_MILLETLTE_VZW) || defined(CONFIG_MACH_MATISSELTE_USC) || defined(CONFIG_MACH_MILLETLTE_ATT) || defined(CONFIG_MACH_MILLETLTE_CAN) || defined(CONFIG_MACH_MILLETLTE_TMO)
   battery->pdata->fuelgauge_name = "sec-fuelgauge";
 #endif
 #if defined(CONFIG_MACH_MATISSELTE_ATT) || defined(CONFIG_MACH_MATISSELTE_VZW) || defined(CONFIG_MACH_MATISSELTE_USC)

@@ -11,7 +11,9 @@
  */
 
 #define pr_fmt(fmt)	"BMS: %s: " fmt, __func__
+#if !(defined(CONFIG_MACH_KANAS3G_CMCC) || defined(CONFIG_MACH_KANAS3G_CTC) || defined(CONFIG_MACH_VICTORLTE))
 #define DEBUG
+#endif
 
 #include <linux/module.h>
 #include <linux/types.h>
@@ -278,7 +280,7 @@ struct qpnp_bms_chip {
 	unsigned int capacity_old;	/* only for atomic calculation */
 	unsigned int capacity_max;	/* only for dynamic calculation */
 	sec_batt_data   *pdata;
-	int				prev_reported_soc;
+	bool			is_charging;
 	#endif
 	int				prev_voltage_based_soc;
 	bool				use_voltage_soc;
@@ -346,6 +348,7 @@ static enum power_supply_property msm_bms_power_props[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_AVG,
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
 	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_ONLINE,
 #endif
 };
 
@@ -829,7 +832,11 @@ static int get_battery_status(struct qpnp_bms_chip *chip)
 
 static bool is_battery_charging(struct qpnp_bms_chip *chip)
 {
+#if defined(CONFIG_BATTERY_SAMSUNG)
+	return chip->is_charging;
+#else
 	return get_battery_status(chip) == POWER_SUPPLY_STATUS_CHARGING;
+#endif
 }
 
 static bool is_battery_full(struct qpnp_bms_chip *chip)
@@ -863,9 +870,15 @@ static bool is_battery_present(struct qpnp_bms_chip *chip)
 		return ret.intval;
 	}
 
+	#if defined(CONFIG_BATTERY_SAMSUNG)
+	/* Default to true if the battery power supply is not registered. */
+	pr_debug("battery power supply is not registered (default true)\n");
+	return true;
+	#else
 	/* Default to false if the battery power supply is not registered. */
 	pr_debug("battery power supply is not registered\n");
 	return false;
+	#endif
 }
 
 static int get_battery_insertion_ocv_uv(struct qpnp_bms_chip *chip)
@@ -905,8 +918,13 @@ static bool is_batfet_closed(struct qpnp_bms_chip *chip)
 		chip->batt_psy = power_supply_get_by_name("battery");
 	if (chip->batt_psy) {
 		/* if battery has been registered, use the online property */
+		#if defined(CONFIG_BATTERY_SAMSUNG) && defined(CONFIG_QPNP_CHARGER)
+		chip->batt_psy->get_property(chip->batt_psy,
+					POWER_SUPPLY_PROP_BATFET, &ret);
+		#else
 		chip->batt_psy->get_property(chip->batt_psy,
 					POWER_SUPPLY_PROP_ONLINE, &ret);
+		#endif
 		return !!ret.intval;
 	}
 
@@ -956,13 +974,33 @@ static int get_simultaneous_batt_v_and_i(struct qpnp_bms_chip *chip,
 	return 0;
 }
 
-static int estimate_ocv(struct qpnp_bms_chip *chip)
+static int get_rbatt(struct qpnp_bms_chip *chip,
+					int soc_rbatt_mohm, int batt_temp)
 {
-	int ibat_ua, vbat_uv, ocv_est_uv;
-	int rc;
-	int rbatt_mohm = chip->default_rbatt_mohm + chip->r_conn_mohm
-					+ chip->rbatt_capacitive_mohm;
+	int rbatt_mohm, scalefactor;
 
+	rbatt_mohm = chip->default_rbatt_mohm;
+	if (chip->rbatt_sf_lut == NULL)  {
+		pr_debug("RBATT = %d\n", rbatt_mohm);
+		return rbatt_mohm;
+	}
+	/* Convert the batt_temp to DegC from deciDegC */
+	batt_temp = batt_temp / 10;
+	scalefactor = interpolate_scalingfactor(chip->rbatt_sf_lut,
+						batt_temp, soc_rbatt_mohm);
+	rbatt_mohm = (rbatt_mohm * scalefactor) / 100;
+
+	rbatt_mohm += chip->r_conn_mohm;
+	rbatt_mohm += chip->rbatt_capacitive_mohm;
+	return rbatt_mohm;
+}
+
+#define DEFAULT_RBATT_SOC	50
+static int estimate_ocv(struct qpnp_bms_chip *chip, int batt_temp)
+{
+	int ibat_ua, vbat_uv, ocv_est_uv, rbatt_mohm, rc;
+
+	rbatt_mohm = get_rbatt(chip, DEFAULT_RBATT_SOC, batt_temp);
 	rc = get_simultaneous_batt_v_and_i(chip, &ibat_ua, &vbat_uv);
 	if (rc) {
 		pr_err("simultaneous failed rc = %d\n", rc);
@@ -970,7 +1008,8 @@ static int estimate_ocv(struct qpnp_bms_chip *chip)
 	}
 
 	ocv_est_uv = vbat_uv + (ibat_ua * rbatt_mohm) / 1000;
-	pr_debug("estimated pon ocv = %d\n", ocv_est_uv);
+	pr_debug("estimated pon ocv = %d, vbat_uv = %d ibat_ua = %d rbatt_mohm = %d\n",
+			ocv_est_uv, vbat_uv, ibat_ua, rbatt_mohm);
 	return ocv_est_uv;
 }
 
@@ -1062,11 +1101,13 @@ static int find_ocv_for_pc(struct qpnp_bms_chip *chip, int batt_temp, int pc)
 
 #define OCV_RAW_UNINITIALIZED	0xFFFF
 #define MIN_OCV_UV		2000000
+static bool is_battery_replaced_in_offmode(struct qpnp_bms_chip *chip);
 static int read_soc_params_raw(struct qpnp_bms_chip *chip,
 				struct raw_soc_params *raw,
 				int batt_temp)
 {
 	int warm_reset, rc;
+	bool offmode_battery_replaced;
 
 	mutex_lock(&chip->bms_output_lock);
 
@@ -1094,10 +1135,12 @@ static int read_soc_params_raw(struct qpnp_bms_chip *chip,
 		pr_debug("PON_OCV_UV = %d, cc = %llx\n",
 				chip->last_ocv_uv, raw->cc);
 		warm_reset = qpnp_pon_is_warm_reset();
+		offmode_battery_replaced = is_battery_replaced_in_offmode(chip);
 		if (raw->last_good_ocv_uv < MIN_OCV_UV
+			    || offmode_battery_replaced
 				|| warm_reset > 0) {
 			pr_debug("OCV is stale or bad, estimating new OCV.\n");
-			chip->last_ocv_uv = estimate_ocv(chip);
+			chip->last_ocv_uv = estimate_ocv(chip, batt_temp);
 			raw->last_good_ocv_uv = chip->last_ocv_uv;
 			reset_cc(chip, CLEAR_CC | CLEAR_SHDW_CC);
 			pr_debug("New PON_OCV_UV = %d, cc = %llx\n",
@@ -1259,27 +1302,6 @@ static int calculate_cc(struct qpnp_bms_chip *chip, int64_t cc,
 				*software_counter + cc_uah);
 		return *software_counter + cc_uah;
 	}
-}
-
-static int get_rbatt(struct qpnp_bms_chip *chip,
-					int soc_rbatt_mohm, int batt_temp)
-{
-	int rbatt_mohm, scalefactor;
-
-	rbatt_mohm = chip->default_rbatt_mohm;
-	if (chip->rbatt_sf_lut == NULL)  {
-		pr_debug("RBATT = %d\n", rbatt_mohm);
-		return rbatt_mohm;
-	}
-	/* Convert the batt_temp to DegC from deciDegC */
-	batt_temp = batt_temp / 10;
-	scalefactor = interpolate_scalingfactor(chip->rbatt_sf_lut,
-						batt_temp, soc_rbatt_mohm);
-	rbatt_mohm = (rbatt_mohm * scalefactor) / 100;
-
-	rbatt_mohm += chip->r_conn_mohm;
-	rbatt_mohm += chip->rbatt_capacitive_mohm;
-	return rbatt_mohm;
 }
 
 #define IAVG_MINIMAL_TIME	2
@@ -1975,9 +1997,6 @@ static int report_cc_based_soc(struct qpnp_bms_chip *chip)
 					chip->catch_up_time_sec,
 					soc, chip->last_soc);
 		}
-		else if (chip->last_soc > soc && charging_since_last_report){
-			soc = chip->last_soc;
-		}
 
 		/* if the battery is close to cutoff allow more change */
 		if (wake_lock_active(&chip->low_voltage_wake_lock))
@@ -2330,6 +2349,13 @@ static int clamp_soc_based_on_voltage(struct qpnp_bms_chip *chip, int soc)
 		return soc;
 	}
 	if (soc == 0 && vbat_uv > chip->v_cutoff_uv) {
+		#if defined(CONFIG_BATTERY_SAMSUNG) || defined(CONFIG_QPNP_SEC_CHARGER)
+		if (get_battery_status(chip) == POWER_SUPPLY_STATUS_CHARGING) {
+			pr_debug("not clamping, using soc = %d, vbat = %d and cutoff = %d\n",
+						soc, vbat_uv, chip->v_cutoff_uv);
+			return soc;
+		}
+		#endif
 		pr_debug("clamping soc to 1, vbat (%d) > cutoff (%d)\n",
 						vbat_uv, chip->v_cutoff_uv);
 		return 1;
@@ -2427,6 +2453,7 @@ static void configure_soc_wakeup(struct qpnp_bms_chip *chip,
 			target_cc_uah,
 			(uint64_t)cc_raw_64, cc_raw,
 			(uint16_t)ocv_raw);
+	pr_debug("current sw_cc_uah = %lld \n", current_shdw_cc_uah);
 }
 
 #define BAD_SOC_THRESH	-10
@@ -2490,8 +2517,21 @@ static int calculate_soc_from_voltage(struct qpnp_bms_chip *chip)
 {
 	int voltage_range_uv, voltage_remaining_uv, voltage_based_soc;
 	int rc, vbat_uv;
+#ifdef CONFIG_MACH_KANAS3G_CTC
+    static bool compensate_flag = false;
+#endif
 
 	rc = get_battery_voltage(chip, &vbat_uv);
+#ifdef CONFIG_MACH_KANAS3G_CTC
+    /*CF open power on state soc use calculate_soc_from_voltage to calculate soc,
+      power on process the voltage pull down, The 1st time need to compensate reduce the init voltage*/
+	if((compensate_flag == false) && (!is_battery_present(chip)))
+	{
+		vbat_uv = vbat_uv - 40000;
+		compensate_flag = true;
+		pr_debug("Compensate vbat used = %duv\n", vbat_uv);
+	}
+#endif
 	if (rc < 0) {
 		pr_err("adc vbat failed err = %d\n", rc);
 		return rc;
@@ -3579,27 +3619,6 @@ static void qpnp_bms_external_power_changed(struct power_supply *psy)
 }
 
 #if defined(CONFIG_BATTERY_SAMSUNG) || defined(CONFIG_QPNP_SEC_CHARGER)
-static void bms_check_changed_soc(struct qpnp_bms_chip *chip,
-				union power_supply_propval *val)
-{
-	if (chip->prev_reported_soc != -EINVAL) {
-		if (abs(chip->prev_reported_soc - val->intval) == 0) {
-			goto report;
-		} else {
-			pr_debug("prev_reported_soc = %d, soc = %d\n",
-					chip->prev_reported_soc, val->intval);
-		}
-		/* if soc have been chaged, only change soc by 1
-		 * soc in increased ? (previous + 1) : (previous - 1) */
-		val->intval = (val->intval > chip->prev_reported_soc) ?
-				(chip->prev_reported_soc + 1) :
-				(chip->prev_reported_soc - 1);
-		val->intval = bound_soc(val->intval);
-	}
-report:
-	chip->prev_reported_soc = val->intval;
-}
-
 /* capacity is  0.1% unit */
 static void bms_get_scaled_capacity(
 				struct qpnp_bms_chip *chip,
@@ -3660,7 +3679,7 @@ static int bms_calculate_dynamic_scale(
 			__func__, chip->capacity_max);
 	}
 
-#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT)
+#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_T10_PROJECT)
 	capacity.intval *= 10;
 	chip->capacity_max =
 		(chip->capacity_max * 1000 / capacity.intval);
@@ -3672,8 +3691,6 @@ static int bms_calculate_dynamic_scale(
 
 	/* update capacity_old for sec_fg_get_atomic_capacity algorithm */
 	chip->capacity_old = 100;
-	/* update prev_reported_soc for bms_check_changed_soc */
-	chip->prev_reported_soc = 100;
 
 	pr_info("%s: %d is used for capacity_max\n",
 		__func__, chip->capacity_max);
@@ -3713,6 +3730,12 @@ static int qpnp_bms_power_set_property(struct power_supply *psy,
 		case POWER_SUPPLY_PROP_CHARGE_FULL:
 			bms_calculate_dynamic_scale(chip);
 			break;
+		case POWER_SUPPLY_PROP_ONLINE:
+			if (val->intval == POWER_SUPPLY_TYPE_BATTERY)
+				chip->is_charging = false;
+			else
+				chip->is_charging = true;
+			break;
 		default:
 			return -EINVAL;
 	}
@@ -3732,7 +3755,6 @@ static int qpnp_bms_power_get_property(struct power_supply *psy,
 		#if defined(CONFIG_BATTERY_SAMSUNG) || defined(CONFIG_QPNP_SEC_CHARGER)
 		val->intval = get_prop_bms_capacity(chip) * 10;
 		bms_get_scaled_capacity(chip,val);
-		bms_check_changed_soc(chip,val);
 		val->intval = val->intval;
 		#else
 		val->intval = get_prop_bms_capacity(chip);
@@ -4021,14 +4043,22 @@ static int set_battery_data(struct qpnp_bms_chip *chip)
 	else{
 	batt_data =&samsung_4450mAH_data;
 	}
-#elif defined(CONFIG_SEC_MATISSE_PROJECT)
+#elif defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_T10_PROJECT)
 	batt_data = &samsung_6800mAH_data;
+#elif defined(CONFIG_SEC_MEGA2_PROJECT)
+	batt_data = &samsung_2800mAH_data;
 #elif defined(CONFIG_SEC_S3VE_PROJECT)
 	batt_data = &samsung_2100mAH_data;
+#elif defined(CONFIG_MACH_MS01_EUR_3G)
+	batt_data = &samsung_8x26_2600mAh_data;
 #elif defined(CONFIG_SEC_KANAS_PROJECT)
 	batt_data = &samsung_2000mAH_data;
 #elif defined(CONFIG_SEC_ATLANTIC3G_COMMON)
-	batt_data = &samsung_2000mAH_data;
+	batt_data = &samsung_2100mAH_4400mV_data;
+#elif defined(CONFIG_SEC_BERLUTI_PROJECT)
+	batt_data = &samsung_1720mAH_data;
+#elif defined(CONFIG_MACH_VICTORLTE) || defined(CONFIG_SEC_VICTOR3GDSDTV_PROJECT)	
+	batt_data = &samsung_2000mAH_victor_data;
 #else
 	batt_data = &oem_batt_data;
 #endif
@@ -4272,26 +4302,30 @@ static inline int bms_read_properties(struct qpnp_bms_chip *chip)
 		pr_err("Missing required properties.\n");
 		return rc;
     }
-  #if defined(CONFIG_SEC_MATISSE_PROJECT)
+  #if defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_T10_PROJECT)
       chip->use_ocv_thresholds = 1;
       chip->ocv_low_threshold_uv = 3600000;
       chip->ocv_high_threshold_uv = 3750000;
       chip->adjust_soc_low_threshold = 3;
-      chip->shutdown_soc_valid_limit = 30;
+      chip->shutdown_soc_valid_limit = 70;
   #elif defined(CONFIG_SEC_MILLET_PROJECT)
       chip->use_ocv_thresholds = 1;
       chip->ocv_low_threshold_uv = 3000000;
       chip->ocv_high_threshold_uv = 4050000;
       chip->low_voltage_threshold = 3250000;
       chip->adjust_soc_low_threshold = 2;
-      chip->shutdown_soc_valid_limit = 30;
   #endif
 
+  #if defined(CONFIG_MACH_MILLET3G_CHN_OPEN)
+      chip->low_voltage_threshold = 3410000;
+  #endif
   #if defined(CONFIG_MACH_MATISSE3G_OPEN)
       if(system_rev<=2)
       chip->r_sense_uohm = 13500;
 	  else
-	  chip->r_sense_uohm = 12500;
+	  chip->r_sense_uohm = 12200;
+  #elif defined(CONFIG_MACH_T10_3G_OPEN)
+          chip->r_sense_uohm = 12000;
   #elif defined(CONFIG_SEC_MATISSELTE_COMMON)
       chip->r_sense_uohm = 12500;
   #elif defined(CONFIG_SEC_MATISSEWIFI_COMMON)
@@ -4299,7 +4333,7 @@ static inline int bms_read_properties(struct qpnp_bms_chip *chip)
       chip->r_sense_uohm = 12500;
       else
       chip->r_sense_uohm = 14000;
-  #elif defined(CONFIG_SEC_MATISSE_PROJECT)
+  #elif defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_T10_PROJECT)
       chip->r_sense_uohm = 14000;
   #elif defined(CONFIG_SEC_MILLETLTE_COMMON)
       if(system_rev<=3)
@@ -4323,6 +4357,7 @@ static inline int bms_read_properties(struct qpnp_bms_chip *chip)
 	pr_debug("ignore_shutdown_soc:%d, use_voltage_soc:%d\n",
 			chip->ignore_shutdown_soc, chip->use_voltage_soc);
 	pr_debug("use external rsense: %d\n", chip->use_external_rsense);
+	pr_info("%s r-sense-uohm = %d ", __func__,chip->r_sense_uohm);
 	return 0;
 }
 
@@ -4345,7 +4380,7 @@ static inline void bms_initialize_constants(struct qpnp_bms_chip *chip)
 	chip->pdata->capacity_max_margin = CAPACITY_MAX_MARGIN;
 	chip->pdata->capacity_min  = CAPACITY_MIN;
 	chip->capacity_max = chip->pdata->capacity_max;
-	chip->prev_reported_soc = -EINVAL;
+	chip->is_charging = false;
 	#endif
 }
 
@@ -4383,7 +4418,7 @@ static int bms_request_irqs(struct qpnp_bms_chip *chip)
 	int rc;
 
 	SPMI_REQUEST_IRQ(chip, rc, sw_cc_thr);
-	enable_irq_wake(chip->sw_cc_thr_irq.irq);
+	enable_irq(chip->sw_cc_thr_irq.irq);
 	SPMI_REQUEST_IRQ(chip, rc, ocv_thr);
 	enable_irq_wake(chip->ocv_thr_irq.irq);
 	return 0;

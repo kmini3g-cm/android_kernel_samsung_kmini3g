@@ -78,6 +78,7 @@ struct sec_battery_info {
 	int current_adc;
 
 	unsigned int capacity;			/* SOC (%) */
+	int prev_reported_soc;
 
 	struct mutex adclock;
 	struct adc_sample_info	adc_sample[ADC_CH_COUNT];
@@ -141,6 +142,7 @@ struct sec_battery_info {
 	unsigned int charging_mode;
 	bool is_recharging;
 	int cable_type;
+	int muic_cable_type;
 	int extended_cable_type;
 	struct wake_lock cable_wake_lock;
 	struct delayed_work cable_work;
@@ -159,15 +161,16 @@ struct sec_battery_info {
 	/* wearable charging */
 	int ps_enable;
 	int ps_status;
+	int ps_changed;
 
 	/* test mode */
 	int test_mode;
 	bool factory_mode;
+	bool store_mode;
 	bool slate_mode;
 
 	int siop_level;
 	int stability_test;
-	int eng_not_full_status;
 };
 
 ssize_t sec_bat_show_attrs(struct device *dev,
@@ -235,6 +238,7 @@ enum {
 	WC_STATUS,
 	WC_ENABLE,
 	FACTORY_MODE,
+	STORE_MODE,
 	UPDATE,
 	TEST_MODE,
 
@@ -256,6 +260,7 @@ enum {
 	BATT_EVENT_LCD,
 	BATT_EVENT_GPS,
 	BATT_EVENT,
+	BATT_TEMP_TABLE,
 #if defined(CONFIG_SAMSUNG_BATTERY_ENG_TEST)
 	BATT_TEST_CHARGE_CURRENT,
 #endif

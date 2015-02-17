@@ -1088,7 +1088,7 @@ static const struct snd_kcontrol_new tapan_common_snd_controls[] = {
 	SOC_SINGLE_TLV("LINEOUT2 Volume", TAPAN_A_RX_LINE_2_GAIN, 0, 20, 1,
 		line_gain),
 
-	SOC_SINGLE_TLV("SPK DRV Volume", TAPAN_A_SPKR_DRV_GAIN, 3, 7, 1,
+	SOC_SINGLE_TLV("SPK DRV Volume", TAPAN_A_SPKR_DRV_GAIN, 3, 8, 1,
 		line_gain),
 
 	SOC_SINGLE_TLV("ADC1 Volume", TAPAN_A_TX_1_EN, 2, 19, 0, analog_gain),
@@ -3384,13 +3384,17 @@ static void tapan_shutdown(struct snd_pcm_substream *substream,
 				 tapan->dai[dai->id].ch_mask);
 		}
 	}
+#ifdef CONFIG_SND_SOC_ES325_ATLANTIC
+	if ((tapan_core != NULL) &&
+	    (tapan_core->dev != NULL) &&
+	    (tapan_core->dev->parent != NULL))	{
+		es325_wrapper_sleep(dai->id);
+	}
+#endif
 	if ((tapan_core != NULL) &&
 	    (tapan_core->dev != NULL) &&
 	    (tapan_core->dev->parent != NULL) &&
 	    (active == 0)) {
-#ifdef CONFIG_SND_SOC_ES325_ATLANTIC
-		es325_wrapper_sleep(dai->id);
-#endif
 		pm_runtime_mark_last_busy(tapan_core->dev->parent);
 		pm_runtime_put(tapan_core->dev->parent);
 		dev_dbg(dai->codec->dev, "%s: unvote requested", __func__);
@@ -5270,8 +5274,10 @@ static const struct tapan_reg_mask_val tapan_reg_defaults[] = {
 	/*Reduce EAR DAC bias to 70% */
 	TAPAN_REG_VAL(TAPAN_A_RX_EAR_BIAS_PA, 0x76),
 	/* Reduce LINE DAC bias to 70% */
-#if defined (CONFIG_SEC_MATISSE_PROJECT)
+#if defined(CONFIG_SEC_MATISSE_PROJECT) || defined(CONFIG_SEC_T10_PROJECT)
 	TAPAN_REG_VAL(TAPAN_A_RX_LINE_BIAS_PA, 0x78),
+#elif defined(CONFIG_MACH_MS01_EUR_3G)
+	TAPAN_REG_VAL(TAPAN_A_RX_LINE_BIAS_PA, 0x7A),
 #else
 	TAPAN_REG_VAL(TAPAN_A_RX_LINE_BIAS_PA, 0x7B),
 #endif
@@ -5368,7 +5374,11 @@ static const struct tapan_reg_mask_val tapan_codec_reg_init_val[] = {
 	/* Initialize current threshold to 365MA
 	 * number of wait and run cycles to 4096
 	 */
+#if defined (CONFIG_MACH_MILLETLTE_KOR)	 
+	{TAPAN_A_RX_HPH_OCP_CTL, 0xEB, 0x6B},
+#else	
 	{TAPAN_A_RX_HPH_OCP_CTL, 0xE9, 0x69},
+#endif
 	{TAPAN_A_RX_COM_OCP_COUNT, 0xFF, 0xFF},
 	{TAPAN_A_RX_HPH_L_TEST, 0x01, 0x01},
 	{TAPAN_A_RX_HPH_R_TEST, 0x01, 0x01},
@@ -5433,6 +5443,12 @@ static const struct tapan_reg_mask_val tapan_codec_reg_mib2_ctl_init_val[] = {
 };
 #endif
 
+#if defined(CONFIG_MACH_ATLANTICLTE_ATT) || defined(CONFIG_SEC_ATLANTIC3G_COMMON)
+static const struct tapan_reg_mask_val tapan_codec_reg_hph_ocp_ctl_init_val[] = {
+	{TAPAN_A_RX_HPH_OCP_CTL, 0xEB, 0x6B},
+};
+#endif
+
 void *tapan_get_afe_config(struct snd_soc_codec *codec,
 			   enum afe_config_type config_type)
 {
@@ -5491,6 +5507,13 @@ static void tapan_codec_init_reg(struct snd_soc_codec *codec)
 					tapan_codec_reg_mib2_ctl_init_val[0].val);
 		}
 #endif
+
+#if defined(CONFIG_MACH_ATLANTICLTE_ATT) || defined(CONFIG_SEC_ATLANTIC3G_COMMON)
+			snd_soc_update_bits(codec,tapan_codec_reg_hph_ocp_ctl_init_val[0].reg,
+					tapan_codec_reg_hph_ocp_ctl_init_val[0].mask,
+					tapan_codec_reg_hph_ocp_ctl_init_val[0].val);
+#endif
+
 }
 static void tapan_slim_interface_init_reg(struct snd_soc_codec *codec)
 {
@@ -6134,6 +6157,7 @@ static int tapan_codec_probe(struct snd_soc_codec *codec)
 				  WCD9XXX_CDC_TYPE_TAPAN);
 	if (ret) {
 		pr_err("%s: wcd9xxx init failed %d\n", __func__, ret);
+		kfree(tapan);
 		return ret;
 	}
 

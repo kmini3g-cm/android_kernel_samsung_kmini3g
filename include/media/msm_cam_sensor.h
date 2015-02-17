@@ -38,7 +38,7 @@
 #define NUM_ACTUATOR_DIR 2
 #define MAX_ACTUATOR_SCENARIO 8
 #define MAX_ACTUATOR_REGION 5
-#define MAX_ACTUATOR_INIT_SET 12
+#define MAX_ACTUATOR_INIT_SET 50 //12
 #define MAX_ACTUATOR_REG_TBL_SIZE 8
 
 #define MOVE_NEAR 0
@@ -475,6 +475,7 @@ enum eeprom_cfg_type_t {
 	CFG_EEPROM_ERASE,
 	CFG_EEPROM_POWER_ON,
 	CFG_EEPROM_POWER_OFF,
+	CFG_EEPROM_READ_DATA_FROM_HW,
 };
 struct eeprom_get_t {
 	uint32_t num_bytes;
@@ -657,6 +658,12 @@ struct msm_actuator_cfg_data {
 enum msm_actuator_write_type {
 	MSM_ACTUATOR_WRITE_HW_DAMP,
 	MSM_ACTUATOR_WRITE_DAC,
+	MSM_ACTUATOR_WRITE_DAC_SEQ,
+};
+
+enum msm_actuator_init_focus_type{
+  MSM_ACTUATOR_INIT_FOCUS_DELAY = 0xDD,
+  MSM_ACTUATOR_INIT_FOCUS_READ_STATUS = 0xDC,  
 };
 
 struct msm_actuator_reg_params_t {
@@ -705,6 +712,15 @@ typedef struct
 	unsigned short shutterspeed;
 	unsigned short isFlashOn;
 } exif_data_t;
+
+enum sensor_af_e {
+	SENSOR_AF_CANCEL = 1,
+	SENSOR_AF_START,
+	SENSOR_AF_PRE_FLASH_ON,
+	SENSOR_AF_PRE_FLASH_OFF,
+	SENSOR_AF_PRE_FLASH_AE_STABLE,
+};
+
 #define VIDIOC_MSM_SENSOR_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 1, struct sensorb_cfg_data)
 

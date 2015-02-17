@@ -132,6 +132,10 @@ struct device *switch_dev;
 EXPORT_SYMBOL(switch_dev);
 #endif
 
+#if defined(CONFIG_TOUCHSCREEN_ZINITIX_BT532)
+extern void bt532_charger_status_cb(int status);
+#endif
+
 #ifdef SYNAPTICS_RMI_INFORM_CHARGER
 struct synaptics_rmi_callbacks *charger_callbacks;
 void synaptics_tsp_charger_infom(int cable_type)
@@ -177,7 +181,7 @@ void mxt_tsp_register_callback(struct mxt_callbacks *cb)
 }
 #endif
 
-#if defined(CONFIG_TOUCHSCREEN_MMS252)
+#if defined(CONFIG_TOUCHSCREEN_MMS252) || defined(CONFIG_TOUCHSCREEN_MMS300)
 struct tsp_callbacks *charger_callbacks;
 struct tsp_callbacks {
         void (*inform_charger)(struct tsp_callbacks *tsp_cb, bool mode);
@@ -364,7 +368,7 @@ static int __init midas_sec_switch_init(void)
 	ret = device_create_file(switch_dev, &dev_attr_disable_vbus);
 	if (ret) {
 		pr_err("Failed to create device file(disable_vbus)!\n");
-		goto err;
+		goto err_create_file;
 	}
 
 #ifdef CONFIG_SEC_LOCALE_KOR
@@ -384,6 +388,8 @@ static int __init midas_sec_switch_init(void)
 
 	return 0;
 
+err_create_file:
+	device_destroy(sec_class,switch_dev->devt);
 err:
 	return -1;
 };
@@ -394,6 +400,7 @@ int max77803_muic_charger_cb(enum cable_type_muic cable_type)
 {
 #ifdef CONFIG_CHARGER_MAX77803
 	struct power_supply *psy = power_supply_get_by_name("battery");
+	struct power_supply *psy_ps = power_supply_get_by_name("ps");
 	union power_supply_propval value;
 	static enum cable_type_muic previous_cable_type = CABLE_TYPE_NONE_MUIC;
 #endif
@@ -421,6 +428,7 @@ int max77803_muic_charger_cb(enum cable_type_muic cable_type)
 	case CABLE_TYPE_NONE_MUIC:
 	case CABLE_TYPE_JIG_UART_OFF_MUIC:
 	case CABLE_TYPE_MHL_MUIC:
+	case CABLE_TYPE_CHARGING_CABLE_MUIC:
 		is_cable_attached = false;
 		break;
 	case CABLE_TYPE_USB_MUIC:
@@ -452,12 +460,13 @@ int max77803_muic_charger_cb(enum cable_type_muic cable_type)
 #endif
 
 #ifdef CONFIG_CHARGER_MAX77803
+	pr_info("%s: cable type for charger: cable_type(%d), previous_cable_type(%d)\n",
+			__func__, cable_type, previous_cable_type);
 	/*  charger setting */
 	if (previous_cable_type == cable_type) {
 		pr_info("%s: SKIP cable setting\n", __func__);
 		goto skip;
 	}
-	previous_cable_type = cable_type;
 
 	switch (cable_type) {
 	case CABLE_TYPE_NONE_MUIC:
@@ -508,20 +517,34 @@ int max77803_muic_charger_cb(enum cable_type_muic cable_type)
 	case CABLE_TYPE_INCOMPATIBLE_MUIC:
 		current_cable_type = POWER_SUPPLY_TYPE_UNKNOWN;
 		break;
+	case CABLE_TYPE_CHARGING_CABLE_MUIC:
+		current_cable_type = POWER_SUPPLY_TYPE_POWER_SHARING;
+		break;
 	default:
 		pr_err("%s: invalid type for charger:%d\n",
 				__func__, cable_type);
 		goto skip;
 	}
 
-	if (!psy || !psy->set_property)
-		pr_err("%s: fail to get battery psy\n", __func__);
-	else {
-		value.intval = current_cable_type;
-		psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE, &value);
+	if (!psy || !psy->set_property || !psy_ps || !psy_ps->set_property) {
+		pr_err("%s: fail to get battery/ps psy\n", __func__);
+	} else {
+		if (current_cable_type == POWER_SUPPLY_TYPE_POWER_SHARING) {
+			value.intval = current_cable_type;
+			psy_ps->set_property(psy_ps, POWER_SUPPLY_PROP_ONLINE, &value);
+		} else {
+			if (previous_cable_type == CABLE_TYPE_CHARGING_CABLE_MUIC) {
+				value.intval = current_cable_type;
+				psy_ps->set_property(psy_ps, POWER_SUPPLY_PROP_ONLINE, &value);
+			} else {
+				value.intval = current_cable_type;
+				psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE, &value);
+			}
+		}
 	}
-skip:
+	previous_cable_type = cable_type;
 #endif
+skip:
 #ifdef CONFIG_JACK_MON
 	jack_event_handler("charger", is_cable_attached);
 #endif
@@ -562,7 +585,6 @@ void set_redriver_power(int on)
 #endif
 #if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
 extern unsigned int system_rev;
-extern void force_dwc3_gadget_disconnect(void);
 #define GPIO_REDRIVER_EN 129
 extern u8 usb30en;
 void set_redriver_power(int on)
@@ -581,7 +603,12 @@ void set_redriver_power(int on)
 		pr_info("usb: Can't support usb 3.0 (rev: %d)\n", system_rev);
 }
 #endif
-
+#if defined(CONFIG_MACH_JACTIVESKT)
+void set_redriver_power(int on)
+{
+    return;
+}
+#endif
 /* usb cable call back function */
 void max77803_muic_usb_cb(u8 usb_mode)
 {
@@ -619,7 +646,6 @@ void max77803_muic_usb_cb(u8 usb_mode)
 			set_ncm_ready(0);
 			usb30en = 0;
 			set_redriver_power(usb_mode);
-			force_dwc3_gadget_disconnect();
 #endif
 		}
 #ifdef CONFIG_USB_HOST_NOTIFY
@@ -1943,12 +1969,13 @@ device_initcall(midas_sec_switch_init);
 
 int current_cable_type = POWER_SUPPLY_TYPE_BATTERY;
 
-static struct switch_dev switch_dock = {
+struct switch_dev switch_dock = {
       .name = "dock",
 };
 
 struct device *switch_dev;
 EXPORT_SYMBOL(switch_dev);
+EXPORT_SYMBOL(switch_dock);
 
 extern void sec_otg_set_vbus_state(int);
 
@@ -2049,10 +2076,11 @@ void tsu6721_callback(enum cable_type_t cable_type, int attached)
 {
 	union power_supply_propval value;
 	int i, ret = 0;
-	struct power_supply *psy;
+	//Initialize power supply to battery, till power supply decided.
+	struct power_supply *psy = power_supply_get_by_name("battery");
 	static enum cable_type_t previous_cable_type = CABLE_TYPE_NONE;
 
-	printk("%s, called \n",__func__);
+	pr_info("%s, called : cable_type :%d \n",__func__, cable_type);
 #if defined(CONFIG_TOUCHSCREEN_MXTS) ||defined(CONFIG_TOUCHSCREEN_MXT224E)
         if (charger_callbacks && charger_callbacks->inform_charger)
                 charger_callbacks->inform_charger(charger_callbacks,
@@ -2091,14 +2119,17 @@ void tsu6721_callback(enum cable_type_t cable_type, int attached)
 #endif
 		break;
 	case CABLE_TYPE_UARTOFF:
+	case CABLE_TYPE_JIG_UART_OFF_VB:
 #if defined(DEBUG_STATUS)
                if (attached)
                {
                        status_count = status_count+1;
-                       pr_err("%s UART Status attached (%d) \n",__func__, status_count);
+                       pr_err("%s UART Status attached (%d), VBUS: %s\n",__func__, 
+					status_count,((cable_type == CABLE_TYPE_UARTOFF ? "No": "Yes")));
                } else {
                        status_count = status_count-1;
-                       pr_err("%s UART status detached (%d) \n", __func__,status_count);
+                       pr_err("%s UART status detached (%d), VBUS: %s\n", __func__,
+					status_count,((cable_type == CABLE_TYPE_UARTOFF ? "No": "Yes")));
                }
 #endif
 		break;
@@ -2138,6 +2169,10 @@ void tsu6721_callback(enum cable_type_t cable_type, int attached)
                        pr_err("%s OTG status detached (%d) \n", __func__,status_count);
                }
 #endif
+#if defined(CONFIG_USB_HOST_NOTIFY)
+		sec_otg_notify(attached ? HNOTIFY_ID : HNOTIFY_ID_PULL);
+#endif
+
 	       return;
 	case CABLE_TYPE_AUDIO_DOCK:
 #if defined(DEBUG_STATUS)
@@ -2165,17 +2200,22 @@ void tsu6721_callback(enum cable_type_t cable_type, int attached)
 		switch_set_state(&switch_dock, attached ? 2 : 0);
 		break;
 	case CABLE_TYPE_DESK_DOCK:
+	case CABLE_TYPE_DESK_DOCK_NO_VB:
 #if defined(DEBUG_STATUS)
                if (attached)
                {
                        status_count = status_count+1;
-                       pr_err("%s Deskdock status attached (%d) \n",__func__, status_count);
+                       pr_err("%s Deskdock %s status attached (%d) \n",__func__,
+				((cable_type == CABLE_TYPE_DESK_DOCK)? "VBUS" : "NO Vbus"),status_count);
                } else {
                        status_count = status_count-1;
-                       pr_err("%s Deskdock status detached (%d) \n", __func__,status_count);
+                       pr_err("%s Deskdock %s status detached (%d) \n", __func__,
+				((cable_type == CABLE_TYPE_DESK_DOCK)? "VBUS" : "NO Vbus"),status_count);
                }
 #endif
-		switch_set_state(&switch_dock, attached);
+		//skip set state for Just TA detach-with target docked.
+		if (cable_type != CABLE_TYPE_DESK_DOCK_NO_VB)
+			switch_set_state(&switch_dock, attached);
 		break;
 	case CABLE_TYPE_INCOMPATIBLE:
 #if defined(DEBUG_STATUS)
@@ -2225,9 +2265,6 @@ void tsu6721_callback(enum cable_type_t cable_type, int attached)
 	case CABLE_TYPE_AUDIO_DOCK:
 		value.intval = POWER_SUPPLY_TYPE_MAINS;
 		break;
-	case CABLE_TYPE_UARTOFF:
-		value.intval = POWER_SUPPLY_TYPE_UARTOFF;
-		break;
 	case CABLE_TYPE_CARDOCK:
 		value.intval = POWER_SUPPLY_TYPE_CARDOCK;
 		break;
@@ -2240,6 +2277,12 @@ void tsu6721_callback(enum cable_type_t cable_type, int attached)
 	case CABLE_TYPE_DESK_DOCK:
 		value.intval = POWER_SUPPLY_TYPE_MISC;
 		break;
+        case CABLE_TYPE_JIG_UART_OFF_VB:
+                value.intval = POWER_SUPPLY_TYPE_UARTOFF;
+                break;
+	case CABLE_TYPE_JIG:
+	case CABLE_TYPE_DESK_DOCK_NO_VB:
+	case CABLE_TYPE_UARTOFF:
 	case CABLE_TYPE_NONE:
 		value.intval = POWER_SUPPLY_TYPE_BATTERY;
 		break;
@@ -2250,6 +2293,7 @@ void tsu6721_callback(enum cable_type_t cable_type, int attached)
 #if defined(CONFIG_MACH_CRATERTD_CHN_3G)
 	current_cable_type = value.intval;
 #endif
+	pr_info("%s setting cable type(%d)\n",__func__, value.intval);
 
 	ret = psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE, &value);
 	if (ret) {
@@ -2337,6 +2381,22 @@ int rt8973_dock_init(void)
 	return 0;
 }
 
+#ifdef MUIC_SUPPORT_CARDOCK_FUNCTION
+void rt8973_jig_callback(jig_type_t type, uint8_t attached)
+{
+	//Check JIG cable type and whether dock finished the initialization or not (rt8973_dock_init)
+	if (type == JIG_UART_BOOT_ON && switch_dock.dev != NULL) {
+		if (attached)
+			pr_err("%s Cardock status attached \n",__func__);
+		else
+			pr_err("%s Cardock status detached \n", __func__);
+
+		switch_set_state(&switch_dock, attached ? 2 : 0);
+	}
+	return;
+}
+#endif
+
 void sec_charger_cb(u8 cable_type)
 {
 	union power_supply_propval value;
@@ -2348,14 +2408,17 @@ void sec_charger_cb(u8 cable_type)
 	case MUIC_RT8973_CABLE_TYPE_NONE:
 	case MUIC_RT8973_CABLE_TYPE_UNKNOWN:
 		current_cable_type = POWER_SUPPLY_TYPE_BATTERY;
+        set_cable_status = CABLE_TYPE_NONE;
 		break;
 	case MUIC_RT8973_CABLE_TYPE_USB:
 	case MUIC_RT8973_CABLE_TYPE_CDP:
 	case MUIC_RT8973_CABLE_TYPE_L200K_SPEC_USB:
 		current_cable_type = POWER_SUPPLY_TYPE_USB;
+        set_cable_status = CABLE_TYPE_USB;
 		break;
 	case MUIC_RT8973_CABLE_TYPE_REGULAR_TA:
 		current_cable_type = POWER_SUPPLY_TYPE_MAINS;
+        set_cable_status = CABLE_TYPE_AC;
 		break;
 	case MUIC_RT8973_CABLE_TYPE_OTG:
 		goto skip;
@@ -2374,16 +2437,20 @@ void sec_charger_cb(u8 cable_type)
 	case MUIC_RT8973_CABLE_TYPE_JIG_USB_ON:
 	case MUIC_RT8973_CABLE_TYPE_JIG_USB_OFF:
 		current_cable_type = POWER_SUPPLY_TYPE_USB;
+        set_cable_status = CABLE_TYPE_USB;
 		break;
 	case MUIC_RT8973_CABLE_TYPE_0x1A:
 	case MUIC_RT8973_CABLE_TYPE_TYPE1_CHARGER:
 		current_cable_type = POWER_SUPPLY_TYPE_MAINS;
+        set_cable_status = CABLE_TYPE_AC;
 		break;
 	case MUIC_RT8973_CABLE_TYPE_0x15:
 		current_cable_type = POWER_SUPPLY_TYPE_MISC;
+        set_cable_status = CABLE_TYPE_AC;
 		break;
 	case MUIC_RT8973_CABLE_TYPE_ATT_TA:
 		current_cable_type = POWER_SUPPLY_TYPE_MISC;
+        set_cable_status = CABLE_TYPE_AC;
 		break;
 	case MUIC_RT8973_CABLE_TYPE_JIG_UART_OFF_WITH_VBUS:
 		current_cable_type = POWER_SUPPLY_TYPE_UARTOFF;
@@ -2392,6 +2459,7 @@ void sec_charger_cb(u8 cable_type)
 		pr_err("%s: invalid type for charger:%d\n",
 			__func__, cable_type);
 		current_cable_type = POWER_SUPPLY_TYPE_UNKNOWN;
+        set_cable_status = CABLE_TYPE_NONE;
 		goto skip;
 	}
 
@@ -2412,18 +2480,44 @@ void rt8973_usb_cb(uint8_t attached) {
 		__func__, attached ? "attached" : "detached");
 	sec_otg_set_vbus_state(attached);
 }
+#ifdef CONFIG_USB_HOST_NOTIFY
+void rt8973_otg_cb(uint8_t attached)
+{
+	pr_info("rt8973_otg_cb attached %d\n", attached);
+	current_cable_type = POWER_SUPPLY_TYPE_OTG;
 
+	if (attached) {
+		pr_info("%s USB Host attached", __func__);
+		sec_otg_notify(HNOTIFY_ID);
+	} else {
+		pr_info("%s USB Host detached", __func__);
+		sec_otg_notify(HNOTIFY_ID_PULL);
+	}
+}
+#endif
 struct rt8973_platform_data  rt8973_pdata = {
+#ifdef CONFIG_MACH_KANAS3G_CTC
+    .irq_gpio = 83,
+#else
     .irq_gpio = 82,
+#endif
     .cable_chg_callback = NULL,
     .ocp_callback = NULL,
     .otp_callback = NULL,
     .ovp_callback = NULL,
     .usb_callback = rt8973_usb_cb,
     .uart_callback = NULL,
+#ifdef CONFIG_USB_HOST_NOTIFY
+    .otg_callback = rt8973_otg_cb,
+#else
     .otg_callback = NULL,
+#endif
+    .dock_init = rt8973_dock_init,
+#ifdef MUIC_SUPPORT_CARDOCK_FUNCTION
+    .jig_callback = rt8973_jig_callback,
+#else
     .jig_callback = NULL,
-
+#endif
 };
 
 /*static struct i2c_board_info rtmuic_i2c_boardinfo[] __initdata = {
@@ -2670,6 +2764,48 @@ static void fsa9485_otg_cb(bool attached)
 		sec_otg_notify(HNOTIFY_ID_PULL);
 	}
 #endif
+}
+
+static void fsa9485_charging_cable_cb(bool attached)
+{
+	union power_supply_propval value;
+	int i, ret = 0;
+	struct power_supply *psy;
+
+	pr_info("fsa9485_charging_cable_cb attached %d\n", attached);
+
+	set_cable_status =
+		attached ? CABLE_TYPE_CHARGING_CABLE : CABLE_TYPE_NONE;
+
+	for (i = 0; i < 10; i++) {
+		psy = power_supply_get_by_name("ps");
+		if (psy)
+			break;
+	}
+	if (i == 10) {
+		pr_err("%s: fail to get ps\n", __func__);
+		return;
+	}
+
+	switch (set_cable_status) {
+	case CABLE_TYPE_CHARGING_CABLE:
+		value.intval = POWER_SUPPLY_TYPE_POWER_SHARING;
+		break;
+	case CABLE_TYPE_NONE:
+		value.intval = POWER_SUPPLY_TYPE_BATTERY;
+		break;
+	default:
+		pr_err("invalid status:%d\n", attached);
+		return;
+	}
+
+	ret = psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE,
+		&value);
+
+	if (ret) {
+		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
+			__func__, ret);
+	}
 }
 
 #if defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_V2_PROJECT)
@@ -3194,6 +3330,7 @@ int msm8974_get_cable_type(void)
 
 struct fsa9485_platform_data fsa9485_pdata = {
 	.otg_cb		= fsa9485_otg_cb,
+	.charge_cb	= fsa9485_charging_cable_cb,
 	.usb_cb		= fsa9485_usb_cb,
 	.charger_cb	= fsa9485_charger_cb,
 	.in_charger_cb	= fsa9485_in_charger_cb,
@@ -3337,7 +3474,7 @@ void sm5502_callback(enum cable_type_t cable_type, int attached)
 	struct power_supply *psy = power_supply_get_by_name("battery");
 	static enum cable_type_t previous_cable_type = CABLE_TYPE_NONE;
 	pr_info("%s, called : cable_type :%d \n",__func__, cable_type);
-#if defined(CONFIG_TOUCHSCREEN_MXTS) ||defined(CONFIG_TOUCHSCREEN_MXT224E) || defined(CONFIG_TOUCHSCREEN_MMS252)
+#if defined(CONFIG_TOUCHSCREEN_MXTS) ||defined(CONFIG_TOUCHSCREEN_MXT224E) || defined(CONFIG_TOUCHSCREEN_MMS252) || defined(CONFIG_TOUCHSCREEN_MMS300)
         if (charger_callbacks && charger_callbacks->inform_charger)
                 charger_callbacks->inform_charger(charger_callbacks,
                 attached);
@@ -3346,13 +3483,15 @@ void sm5502_callback(enum cable_type_t cable_type, int attached)
 	mxt_tsp_charger_infom(attached);
 #endif
 
-	if (cable_type == CABLE_TYPE_INCOMPATIBLE)
-		cable_type = CABLE_TYPE_AC;
 	set_cable_status = attached ? cable_type : CABLE_TYPE_NONE;
 
+if(!poweroff_charging){
+#if defined(CONFIG_TOUCHSCREEN_ZINITIX_BT532)
+	bt532_charger_status_cb(set_cable_status);
+#endif
+}
 	switch (cable_type) {
 	case CABLE_TYPE_USB:
-
 #if defined(DEBUG_STATUS)
                if (attached)
                {
@@ -3466,6 +3605,21 @@ void sm5502_callback(enum cable_type_t cable_type, int attached)
 #endif
 		switch_set_state(&switch_dock, attached ? 2 : 0);
 		break;
+#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT)
+	case CABLE_TYPE_SMART_DOCK:
+#if defined(DEBUG_STATUS)
+               if (attached)
+               {
+                       status_count = status_count+1;
+                       pr_err("%s SMART status attached (%d) \n",__func__, status_count);
+               } else {
+                       status_count = status_count-1;
+                       pr_err("%s SMART status detached (%d) \n", __func__,status_count);
+               }
+#endif
+		switch_set_state(&switch_dock, attached ? 8 : 0); // 8 for CABLE_TYPE_SMART_DOCK:
+	    break;
+#endif
 	case CABLE_TYPE_DESK_DOCK:
 	case CABLE_TYPE_DESK_DOCK_NO_VB:
 #if defined(DEBUG_STATUS)
@@ -3480,7 +3634,21 @@ void sm5502_callback(enum cable_type_t cable_type, int attached)
 				((cable_type == CABLE_TYPE_DESK_DOCK)? "VBUS" : "NOVBUS"),status_count);
                }
 #endif
-		switch_set_state(&switch_dock, attached);
+		if(cable_type != CABLE_TYPE_DESK_DOCK_NO_VB)
+			switch_set_state(&switch_dock, attached);
+		break;
+	case CABLE_TYPE_219KUSB:
+#if defined(DEBUG_STATUS)
+               if (attached)
+               {
+                       status_count = status_count+1;
+                       pr_err("%s 219K USB status attached (%d) \n",__func__, status_count);
+               } else {
+                       status_count = status_count-1;
+                       pr_err("%s 219K USB status detached (%d) \n", __func__,status_count);
+               }
+#endif
+		sec_otg_set_vbus_state(attached);
 		break;
 	case CABLE_TYPE_INCOMPATIBLE:
 #if defined(DEBUG_STATUS)
@@ -3534,6 +3702,7 @@ void sm5502_callback(enum cable_type_t cable_type, int attached)
 	case CABLE_TYPE_USB:
 		value.intval = POWER_SUPPLY_TYPE_USB;
 		break;
+	case CABLE_TYPE_219KUSB:
 	case CABLE_TYPE_AC:
 	case CABLE_TYPE_AUDIO_DOCK:
 		value.intval = POWER_SUPPLY_TYPE_MAINS;
@@ -3545,7 +3714,7 @@ void sm5502_callback(enum cable_type_t cable_type, int attached)
 		value.intval = POWER_SUPPLY_TYPE_USB_CDP;
 		break;
 	case CABLE_TYPE_INCOMPATIBLE:
-		value.intval = POWER_SUPPLY_TYPE_MAINS;
+		value.intval = POWER_SUPPLY_TYPE_UNKNOWN;
 		break;
 	case CABLE_TYPE_DESK_DOCK:
 		value.intval = POWER_SUPPLY_TYPE_MAINS;
@@ -3553,16 +3722,23 @@ void sm5502_callback(enum cable_type_t cable_type, int attached)
         case CABLE_TYPE_JIG_UART_OFF_VB:
                 value.intval = POWER_SUPPLY_TYPE_UARTOFF;
                 break;
+	case CABLE_TYPE_JIG:
 	case CABLE_TYPE_DESK_DOCK_NO_VB:
 	case CABLE_TYPE_UARTOFF:
 	case CABLE_TYPE_NONE:
 		value.intval = POWER_SUPPLY_TYPE_BATTERY;
 		break;
+#if defined(CONFIG_SEC_MILLET_PROJECT) || defined(CONFIG_SEC_MATISSE_PROJECT)
+	case CABLE_TYPE_SMART_DOCK:
+		value.intval = POWER_SUPPLY_TYPE_MAINS;
+		break;
+#endif
 	default:
 		pr_err("%s: invalid cable :%d\n", __func__, set_cable_status);
 		return;
 	}
 	current_cable_type = value.intval;
+	pr_info("%s:MUIC setting the cable type as (%d)\n",__func__,value.intval);
 
 	if (!psy || !psy->set_property)
 		pr_err("%s: fail to get battery psy\n", __func__);

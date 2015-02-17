@@ -1,12 +1,40 @@
 /*
- *  scfs.c
+ * fs/scfs/scfs.c
+ *
+ * Copyright (C) 2014 Samsung Electronics Co., Ltd.
+ *   Authors: Jongmin Kim <jm45.kim@samsung.com>
+ *            Sangwoo Lee <sangwoo2.lee@samsung.com>
+ *            Inbae Lee   <inbae.lee@samsung.com>
+ *
+ * This program has been developed as a stackable file system based on
+ * the WrapFS, which was written by:
+ *
+ * Copyright (C) 1997-2003 Erez Zadok
+ * Copyright (C) 2001-2003 Stony Brook University
+ * Copyright (C) 2004-2006 International Business Machines Corp.
+ *   Author(s): Michael A. Halcrow <mahalcro@us.ibm.com>
+ *              Michael C. Thompson <mcthomps@us.ibm.com>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/crypto.h>
 #include <linux/nsproxy.h>
 #include <linux/parser.h>
+#include <linux/statfs.h>
 #include "scfs.h"
-
+#include <linux/lzo.h>
 #include <linux/ctype.h>
 
 struct kmem_cache *scfs_file_info_cache;
@@ -18,14 +46,19 @@ struct kmem_cache *scfs_header_cache;
 struct kmem_cache *scfs_xattr_cache;
 struct kmem_cache *scfs_info_entry_list;
 
-static struct crypto_comp *tfm_handles[TOTAL_TYPES];
+/* LZO must be enabled */
+#ifndef CONFIG_CRYPTO_LZO
+#error "CONFIG_CRYPTO_LZO is not enabled!"
+#endif
 
-static const char *tfm_names[TOTAL_TYPES] = 
+static void *lzo_workmem;
+static struct crypto_comp *tfm_handles[TOTAL_TYPES];
+const char *tfm_names[TOTAL_TYPES] = 
 {
 	"lzo",		/* lzo */
-	"bzip", 	/* TODO bzip2? */
-	"deflate",	/* zlib */ 
-	"fastlzo"	/* TODO lzo? */
+	"deflate", 	/* bzip2 */
+	"zlib",		/* zlib */ 
+	"fastlzo"	/* lzo */
 };
 
 void scfs_printk(const char *fmt, ...)
@@ -63,18 +96,19 @@ int scfs_reload_meta(struct file *file)
 		return ret;
 	}
 
+	if (sii->cinfo_array)
+		scfs_cinfo_free(sii, sii->cinfo_array);
+
 	SCFS_PRINT("f:%s info size = %d \n",
 		file->f_path.dentry->d_name.name, sii->cinfo_array_size);
-	ASSERT(sii->cinfo_array_size);
 	if (sii->cinfo_array_size) {
-		buf = vmalloc(sii->cinfo_array_size);
+		//buf = vmalloc(sii->cinfo_array_size);
+		buf = scfs_cinfo_alloc(sii, sii->cinfo_array_size);
 		if (!buf) {
 			ret = -ENOMEM;
 			goto out;
 		}
-#if SCFS_PROFILE_MEM
-		atomic_add(sii->cinfo_array_size, &sbi->vmalloc_size);
-#endif
+
 		pos = i_size_read(sii->lower_inode) - sii->cinfo_array_size -
 				sizeof(struct comp_footer);
 		ASSERT(pos > 0);
@@ -84,14 +118,6 @@ int scfs_reload_meta(struct file *file)
 
 		ret = 0;
 	}
-
-	if (sii->cinfo_array) {
-		vfree(sii->cinfo_array);
-#if SCFS_PROFILE_MEM
-		atomic_sub(previous_cinfo_array_size, &sbi->vmalloc_size);
-#endif
-	}
-
 	sii->cinfo_array = buf;
 	clear_meta_invalid(sii);
 out:
@@ -153,11 +179,16 @@ int get_cluster_info(struct file *file, int cluster_idx,
 		if (list_empty(&sii->cinfo_list)) {
 			SCFS_PRINT_ERROR("cluster idx : %d, and info size : %d, but "
 				"info list is empty!\n");
-			ASSERT(0);
+			return -EINVAL;
 		}
 		list_for_each_safe(head, tmp, &sii->cinfo_list) {
 			cinfo_entry = list_entry(head, struct cinfo_entry, entry);
-			ASSERT(cinfo_entry->current_cluster_idx >= cluster_idx);
+			if (cinfo_entry->current_cluster_idx < cluster_idx) {
+				SCFS_PRINT_ERROR("cluster idx : %d, and current_cluster_idx "
+					"%d, cinfo_entry->current_cluster_idx\n");
+				return -EINVAL;
+			}
+
 			if (cinfo_entry->current_cluster_idx == cluster_idx) {
 				//SCFS_PRINT("found matched cluster info in list\n");
 				cinfo = &cinfo_entry->cinfo;
@@ -240,15 +271,21 @@ int scfs_parse_options(struct scfs_sb_info *sbi, char *options)
 			break;
 		case scfs_opt_comp_type:
 			type = args[0].from;
-			// default type is 'lzo'
 			if (!strcmp(type, "lzo"))
 				sbi->options.comp_type = LZO;
+/* disable bzip for now, crypto_alloc_comp doesn't work for some reason */
+#if 0 //#ifdef CONFIG_CRYPTO_DEFLATE
 			else if (!strcmp(type, "bzip2"))
 				sbi->options.comp_type = BZIP2;
+#endif
+#ifdef CONFIG_CRYPTO_ZLIB
 			else if (!strcmp(type, "zlib"))
 				sbi->options.comp_type = ZLIB;
+#endif
+#ifdef CONFIG_CRYPTO_FASTLZO
 			else if (!strcmp(type, "fastlzo"))
 				sbi->options.comp_type = FASTLZO;
+#endif
 			else {
 				SCFS_PRINT("invalid compression type\n");
 				return -EINVAL;
@@ -293,6 +330,10 @@ int scfs_initialize_lower_file(struct dentry *dentry, struct file **lower_file)
 		(*lower_file) = NULL;
 	}
 	
+#ifdef CONFIG_SCFS_LOWER_PAGECACHE_INVALIDATION
+	(*lower_file)->f_flags |= O_SCFSLOWER;
+#endif
+
 	return ret;
 }
 
@@ -381,7 +422,6 @@ int scfs_read_cluster(struct file *file, struct page *page,
 			"page->idx %d i_size %lld\n",
 			file->f_path.dentry->d_name.name, page->index, i_size);
 		unlock_page(page);
-		/* return something recognizable for readpage to catch this */
 		return SCFS_SUCCESS;
 	}
 
@@ -399,7 +439,6 @@ int scfs_read_cluster(struct file *file, struct page *page,
 				file->f_path.dentry->d_name.name,
 				cluster_idx, last_cluster_idx, i_size, page->index,
 				ret);
-			ASSERT(0);
 			return -ERANGE;
 	}
 
@@ -416,7 +455,6 @@ int scfs_read_cluster(struct file *file, struct page *page,
 				"clust %u of %u cinfo.size %u\n",
 				file->f_path.dentry->d_name.name,
 				cluster_idx, last_cluster_idx, cinfo.size);
-			ASSERT(0);
 			return -EINVAL;
 		}
 
@@ -432,8 +470,6 @@ int scfs_read_cluster(struct file *file, struct page *page,
 		size = cinfo.size;
 		pos = (loff_t)cinfo.offset;
 	} else {
-		/* if it's an uncompressed file, forget clusters, 
-		   only read one page. */
 		*compressed = 0;
 		size = sii->cluster_size;
 
@@ -447,7 +483,6 @@ int scfs_read_cluster(struct file *file, struct page *page,
 	if (!lower_file) {
 		SCFS_PRINT_ERROR("file %s: lower file is null!\n",
 			file->f_path.dentry->d_name.name);
-		ASSERT(0);
 		return -EINVAL;
 	}
 
@@ -480,7 +515,6 @@ int scfs_read_cluster(struct file *file, struct page *page,
 				size, ret, buf_c, *buf_u);
 			ClearPageUptodate(page);
 			unlock_page(page);
-			ASSERT(0);
 			return ret;
 		}
 	}
@@ -493,48 +527,56 @@ int scfs_read_cluster(struct file *file, struct page *page,
  *
  * Parameters:
  * @algo: algorithm type to use
- * @*page: requested page, either the sole page from read/writepage,
- *	   or... the... first page of the cluster for multiple read/writes...?
  * @*buf_c: global buffer for compressed cluster data
  * @*buf_u: global buffer for decompressed cluster data
- * @len: compressed cluster length (as a hint)
- *
+ * @len: compressed size of this cluster
+ * @*actual: IN - full cluster size, OUT - decompressed size
  * Return:
  * SCFS_SUCCESS if success, otherwise if error
  *
  * Description:
- * Decompress a cluster
+ * Decompress a cluster. *actual needs to be set as size of the original
+ * cluster by the caller.
  */
 int scfs_decompress(enum comp_type algo, char *buf_c, char *buf_u, int len, 
 	int *actual)
 {
 	int ret = SCFS_SUCCESS;
+	size_t tmp_len = *actual;
 	
 	ASSERT(algo < TOTAL_TYPES);
-
-	if (tfm_handles[algo] == NULL) {
-		//TODO use CRYPTO_ALG_ASYNC?
-		tfm_handles[algo] = crypto_alloc_comp(tfm_names[algo], 0, 0);
-		if (IS_ERR(tfm_handles[algo])) {
-			SCFS_PRINT_ERROR("crypto_alloc_comp failed, "
-				"len %d error %ld\n",
-				len, PTR_ERR(tfm_handles[algo]));
-			tfm_handles[algo] = NULL;
-			return SCFS_ERR_OUT_OF_MEMORY;
+	
+	switch (algo) {
+	
+	case LZO:
+		ret = lzo1x_decompress_safe(buf_c, len, buf_u, &tmp_len); 
+		if (ret) {
+			SCFS_PRINT_ERROR("lzo decompress error! "
+				"ret %d len %d tmp_len %d\n", 
+				ret, len, tmp_len);
+			ret = -EIO;
+		}
+		break;
+	default:
+		if (tfm_handles[algo] == NULL) {
+			tfm_handles[algo] = crypto_alloc_comp(tfm_names[algo], 0, 0);
+			if (IS_ERR(tfm_handles[algo])) {
+				SCFS_PRINT_ERROR("crypto_alloc_comp failed, "
+				"algo %d name %s\n",
+				algo, PTR_ERR(tfm_names[algo]));
+				tfm_handles[algo] = NULL;
+				return SCFS_ERR_OUT_OF_MEMORY;
+			}	
+		}
+		ret = crypto_comp_decompress(tfm_handles[algo], buf_c, len, buf_u, actual);
+		if (ret) {
+			SCFS_PRINT_ERROR("crypto_comp_decompress error! "
+			"ret %d len %d actual %d\n",
+			ret, len, *actual);
+			ret = -EIO;
 		}
 	}
-	SCFS_PRINT("crypto_comp_decompress start, len %d\n", len);
-	ret = crypto_comp_decompress(tfm_handles[algo], buf_c, len, buf_u, 
-		actual);
-	SCFS_PRINT("crypto_comp_decompress end, actual %d\n", *actual);
-	
-	if (ret) {
-		SCFS_PRINT_ERROR("crypto_comp_decompress error! "
-			"ret %d len %d actual %d\n", 
-			ret, len, *actual);
-		ret = -EIO;
-	}
-	
+	*actual = tmp_len;	
 	return ret;
 }
 
@@ -543,52 +585,73 @@ int scfs_decompress(enum comp_type algo, char *buf_c, char *buf_u, int len,
  *
  * Parameters:
  * @algo: algorithm type to use
- * @*page: requested page, either the sole page from read/writepage,
- *	   or... the... first page of the cluster for multiple read/writes...?
  * @*buf_c: global buffer for compressed cluster data
  * @*buf_u: global buffer for decompressed cluster data
- * @*len: actual compressed cluster length after compression
- *
+ * @len: uncompressed size of this cluster
+ * @*actual: IN - full cluster size, OUT - compressed size
+ 
  * Return:
  * SCFS_SUCCESS if success, otherwise if error
  *
  * Description:
- * Compress a cluster
+ * Compress a cluster. *actual needs to be set as full cluster size
+ * by the caller.
  */
 
 int scfs_compress(enum comp_type algo, char *buf_c, char *buf_u, int len, 
 	int *actual)
 {
 	int ret = SCFS_SUCCESS;
+	size_t tmp_len = *actual;
 
-	SCFS_DEBUG_START;
 	ASSERT(algo < TOTAL_TYPES);
-
-	if (tfm_handles[algo] == NULL) {
-		//TODO use CRYPTO_ALG_ASYNC?
-		tfm_handles[algo] = crypto_alloc_comp(tfm_names[algo], 0, 0);
-		if (IS_ERR(tfm_handles[algo])) {
-			SCFS_PRINT_ERROR("crypto_alloc_comp failed, "
-				"len %d error %ld\n",
-				len, PTR_ERR(tfm_handles[algo]));
-			tfm_handles[algo] = NULL;
-			return SCFS_ERR_OUT_OF_MEMORY;
+	
+	switch (algo) {
+	
+	case LZO:
+		if (!lzo_workmem) {
+			lzo_workmem = vmalloc(LZO1X_MEM_COMPRESS);
+			if (!lzo_workmem) {
+				SCFS_PRINT_ERROR("vmalloc for lzo workmem failed, "
+					"len %d\n",
+					LZO1X_MEM_COMPRESS);
+				return SCFS_ERR_OUT_OF_MEMORY;
+			}
+		}
+		/* at the moment, we are unsure what performance implications this memset
+		   will incur on low-end devices. may have to consider double buffering
+		   or LZO tweaking if setback is serious */
+		//TODO keep an eye out for performance degradation
+		memset(lzo_workmem, 0, LZO1X_MEM_COMPRESS);
+		ret = lzo1x_1_compress(buf_u, len, buf_c, &tmp_len, lzo_workmem);
+		if (ret) {
+			SCFS_PRINT("lzo compress error! "
+				"ret %d len %d tmp_len %d\n", 
+				ret, len, tmp_len);
+			ret = -EIO;
+		}
+		break;
+	
+	default:
+		if (tfm_handles[algo] == NULL) {
+			tfm_handles[algo] = crypto_alloc_comp(tfm_names[algo], 0, 0);
+			if (IS_ERR(tfm_handles[algo])) {
+				SCFS_PRINT_ERROR("crypto_alloc_comp failed, "
+				"algo %d name %s\n",
+				algo, PTR_ERR(tfm_names[algo]));
+				tfm_handles[algo] = NULL;
+				return SCFS_ERR_OUT_OF_MEMORY;
+			}
+		}
+		ret = crypto_comp_compress(tfm_handles[algo], buf_u, len, buf_c, actual);
+		if (ret) {
+			SCFS_PRINT_ERROR("crypto_comp_compress error! "
+			"ret %d len %d actual %d\n",
+			ret, len, *actual);
+			ret = -EIO;
 		}
 	}
-	SCFS_PRINT("crypto_comp_compress start, len %d\n", len);
-	ret = crypto_comp_compress(tfm_handles[algo], buf_u, len, buf_c, 
-		actual);
-	SCFS_PRINT("crypto_comp_compress end, actual %d\n", *actual);
-	
-	if (ret) {
-		SCFS_PRINT("crypto_comp_compress error! "
-			"ret %d len %d actual %d\n", 
-			ret, len, *actual);
-		ret = -EIO;
-	}
-
-	SCFS_DEBUG_END;
-	
+	*actual = tmp_len;
 	return ret;
 }
 
@@ -612,6 +675,31 @@ void scfs_free_mempool_buffer(struct page *p, struct scfs_sb_info *sbi)
 #if SCFS_PROFILE_MEM
 	atomic_sub(SCFS_MEMPOOL_SIZE, &sbi->mempool_size);
 #endif
+}
+
+int scfs_check_space(struct scfs_sb_info *sbi, struct dentry *dentry)
+{
+	int ret = SCFS_SUCCESS;
+	struct dentry *lower_dentry = scfs_lower_dentry(dentry);
+	struct kstatfs buf;
+	size_t min_space = (atomic_read(&sbi->total_cluster_count)*sizeof(struct scfs_cinfo)) + 
+		(atomic_read(&sbi->current_file_count)*sizeof(struct comp_footer)) +
+		atomic64_read(&sbi->current_data_size);
+
+	SCFS_DEBUG_START;
+	
+	ret = lower_dentry->d_sb->s_op->statfs(lower_dentry, &buf);
+	if (ret)
+		return ret;
+
+	if((buf.f_bavail * PAGE_SIZE) < min_space) {
+		SCFS_PRINT_ERROR("bavail = %ld, req_space = %ld\n", buf.f_bavail * PAGE_SIZE
+			, min_space);
+		ret = -ENOSPC;
+	}
+	SCFS_DEBUG_END;
+	
+	return ret;
 }
 
 void sync_page_to_buffer(struct page *page, char *buffer)
@@ -670,7 +758,7 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 	}
 	last = list_entry(sii->cinfo_list.prev, struct cinfo_entry, entry);
 
-	//if last cluster exist, we should write it first.
+	/* if last cluster exists, we should write it first. */
 	if (IS_COMPRESSED(sii)) {
 	 	if (sii->cluster_buffer.original_size > 0) {
 			ret = scfs_compress(sii->comp_type, sii->cluster_buffer.c_buffer
@@ -711,7 +799,11 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 			if (ret < 0) {
 				SCFS_PRINT_ERROR("f:%s writing last cluster buffer failed, ret : %d\n",
 					sii->lower_file->f_path.dentry->d_name.name, ret);
+				/* TODO : We should remove this assert func() someday.
+					  close() syscall doesn't have a return value and
+					  we don't have a data of error case in writing meta. */
 				ASSERT(0);
+				make_meta_invalid(sii);
 			} else
 				ret = 0;
 
@@ -720,6 +812,7 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 				sii->cluster_buffer.c_buffer = NULL;
 				sii->cluster_buffer.c_page = NULL;
 			} 
+			atomic64_sub(sii->cluster_buffer.original_size ,&sbi->current_data_size);
 			sii->cluster_buffer.original_size = 0;
 		}
 
@@ -733,7 +826,7 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 		if (sii->compressd) {
 			last = list_entry(sii->cinfo_list.next, struct cinfo_entry, entry);
 
-			// writing existing meta from sii.
+			/* writing existing meta from sii */
 			if (sii->cinfo_array_size) {
 				ret = scfs_lower_write(sii->lower_file, sii->cinfo_array
 						,cinfo_size * last->current_cluster_idx, &pos);
@@ -741,7 +834,9 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 					SCFS_PRINT_ERROR("f:%s write fail in writing" \
 						"existing meta, ret : %d.\n",
 						sii->lower_file->f_path.dentry->d_name.name, ret);
+					/* TODO : remove this assert() someday! */
 					ASSERT(0);
+					make_meta_invalid(sii);
 				} else
 					ret = 0;
 			}
@@ -773,9 +868,13 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 						SCFS_PRINT_ERROR("f:%s write fail in writing " \
 							"new metas, ret : %d\n",
 							sii->lower_file->f_path.dentry->d_name.name, ret);
+						/* TODO : remove this assert() someday! */
 						ASSERT(0);
+						make_meta_invalid(sii);
 					}
 
+					atomic_sub((current_pos - sii->cluster_buffer.u_buffer)/sizeof(struct scfs_cinfo)
+						, &sbi->total_cluster_count);
 					cf.footer_size = (cinfo_size * (written_index + 1)) + CF_SIZE;
 					current_pos = sii->cluster_buffer.u_buffer;
 				}
@@ -795,10 +894,11 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 	} else {
 		cf.footer_size = CF_SIZE;
 		pos = i_size_read(&sii->vfs_inode);
-		// Remove fake cluster_info
+		/* Remove fake cluster_info */
 		cinfo_entry = list_entry(sii->cinfo_list.prev, struct cinfo_entry, entry);
 		list_del(&cinfo_entry->entry);
-		kmem_cache_free(scfs_info_entry_list, cinfo_entry);		
+		kmem_cache_free(scfs_info_entry_list, cinfo_entry);
+		atomic_sub(1, &sbi->total_cluster_count);
 	}
 	cf.cluster_size = sii->cluster_size;
 	cf.comp_type = sii->comp_type;
@@ -810,7 +910,9 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 	if (ret < 0) {		
 		SCFS_PRINT_ERROR("f:%s write fail, comp_footer, ret : %d",
 			sii->lower_file->f_path.dentry->d_name.name, ret);
+		/* TODO : remove this assert() someday! */
 		ASSERT(0);
+		make_meta_invalid(sii);
 	} else
 		ret = 0;
 
@@ -826,7 +928,9 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 			SCFS_PRINT_ERROR("f:%s error in lower_truncate, %d",
 				sii->lower_file->f_path.dentry->d_name.name,
 				ret);
+			/* TODO : remove this assert() someday! */
 			ASSERT(0);
+			make_meta_invalid(sii);
 		}
 	}
 	if (cf.footer_size > CF_SIZE)
@@ -838,6 +942,7 @@ int scfs_write_meta(struct scfs_inode_info *sii)
 		scfs_free_mempool_buffer(sii->cluster_buffer.u_page, sbi);
 		sii->cluster_buffer.u_buffer = NULL;
 		sii->cluster_buffer.u_page = NULL;
+		atomic_sub(1, &sbi->current_file_count);
 	}
 
 	SCFS_DEBUG_END;
@@ -849,9 +954,7 @@ struct cinfo_entry *scfs_alloc_cinfo_entry(unsigned int cluster_index,
 		struct scfs_inode_info *sii)
 {
 	struct cinfo_entry *new_entry = NULL;
-#if SCFS_PROFILE_MEM
 	struct scfs_sb_info *sbi = SCFS_S(sii->vfs_inode.i_sb);
-#endif
 
 	new_entry = kmem_cache_zalloc(scfs_info_entry_list, GFP_KERNEL);
 	if (!new_entry) {
@@ -863,7 +966,7 @@ struct cinfo_entry *scfs_alloc_cinfo_entry(unsigned int cluster_index,
 #endif
 	new_entry->current_cluster_idx = cluster_index;
 	list_add_tail(&new_entry->entry, &sii->cinfo_list);
-
+	atomic_add(1, &sbi->total_cluster_count);
 	return new_entry;
 }
 
@@ -876,7 +979,6 @@ int scfs_get_cluster_from_lower(struct scfs_inode_info *sii, struct file *lower_
 	if (clust_info.size > sii->cluster_size) {
 		SCFS_PRINT_ERROR("f:%s clust_info.size out of bounds, size %d\n",
 			lower_file->f_path.dentry->d_name.name, clust_info.size);
-		ASSERT(0);
 		return -EINVAL;
 	}
 
@@ -893,7 +995,6 @@ int scfs_get_cluster_from_lower(struct scfs_inode_info *sii, struct file *lower_
 				SCFS_PRINT_ERROR("f:%s read failed, size %d pos %d ret = %d\n",
 					lower_file->f_path.dentry->d_name.name,
 					clust_info.size, (int)pos, ret);
-				ASSERT(0);
 				return ret;
 			} else
 				ret = 0;
@@ -908,7 +1009,6 @@ int scfs_get_cluster_from_lower(struct scfs_inode_info *sii, struct file *lower_
 				SCFS_PRINT_ERROR("f:%s read failed, size %d pos %d ret = %d\n",
 					lower_file->f_path.dentry->d_name.name,
 					clust_info.size, (int)pos, ret);
-				ASSERT(0);
 				return ret;
 			} else
 				ret = 0;
@@ -921,7 +1021,6 @@ int scfs_get_cluster_from_lower(struct scfs_inode_info *sii, struct file *lower_
 			if (ret) {
 				SCFS_PRINT_ERROR("f:%s decompress lower cluster failed.\n",
 					lower_file->f_path.dentry->d_name.name);
-				ASSERT(0);
 				return -EIO;
 			}				
 			sii->cluster_buffer.original_size = len;
@@ -933,7 +1032,6 @@ int scfs_get_cluster_from_lower(struct scfs_inode_info *sii, struct file *lower_
 			SCFS_PRINT_ERROR("f:%s vfs_read failed, size %d pos %d ret = %d\n",
 				lower_file->f_path.dentry->d_name.name,
 				clust_info.size, (int) pos, ret);
-			ASSERT(0);
 			return ret;
 		} else
 			ret = 0;
@@ -941,11 +1039,13 @@ int scfs_get_cluster_from_lower(struct scfs_inode_info *sii, struct file *lower_
 		sii->cluster_buffer.original_size = clust_info.size;		
 	}
 
-	return SCFS_SUCCESS;
+	return 0;
 }
 
 int scfs_get_comp_buffer(struct scfs_inode_info *sii)
 {
+	struct scfs_sb_info *sbi = SCFS_S(sii->vfs_inode.i_sb);
+
 	if (!sii->cluster_buffer.u_buffer) {
 		sii->cluster_buffer.u_page =
 			scfs_alloc_mempool_buffer(SCFS_S(sii->vfs_inode.i_sb));
@@ -957,6 +1057,7 @@ int scfs_get_comp_buffer(struct scfs_inode_info *sii)
 
 		if (!sii->cluster_buffer.u_buffer)
 			return SCFS_ERR_OUT_OF_MEMORY;
+		atomic_add(1, &sbi->current_file_count);
 	}
 
 	if (!sii->cluster_buffer.c_buffer) {
@@ -1024,10 +1125,7 @@ int scfs_truncate(struct dentry *dentry, loff_t size)
 		return ret;
 	}
 	if (sii->cinfo_array) {
-		vfree(sii->cinfo_array);
-#if SCFS_PROFILE_MEM
-		atomic_sub(sii->cinfo_array_size, &sbi->vmalloc_size);
-#endif
+		scfs_cinfo_free(sii, sii->cinfo_array);
 		sii->cinfo_array = NULL;
 	}
 	sii->cinfo_array_size = 0;
@@ -1215,4 +1313,44 @@ int scfs_init_kmem_caches(void)
 	return SCFS_SUCCESS;
 }
 
+void *scfs_cinfo_alloc(struct scfs_inode_info *sii, unsigned long size)
+{
+#if SCFS_PROFILE_MEM
+	struct scfs_sb_info *sbi = SCFS_S(sii->vfs_inode.i_sb);
+	unsigned long valloc_size = PAGE_ALIGN(size) + PAGE_SIZE;
+#endif
 
+	if (size >= PAGE_SIZE) {
+		sii->flags |= SCFS_CINFO_OVER_PAGESIZE;
+#if SCFS_PROFILE_MEM
+		atomic_add(valloc_size, &sbi->vmalloc_size);
+#endif
+		return vmalloc(size);
+	} else {
+		sii->flags &= ~SCFS_CINFO_OVER_PAGESIZE;
+#if SCFS_PROFILE_MEM
+		atomic_add(size, &sbi->kmalloc_size);
+#endif
+		return kmalloc(size, GFP_KERNEL);
+	}
+}
+
+void scfs_cinfo_free(struct scfs_inode_info *sii, const void *addr)
+{
+#if SCFS_PROFILE_MEM
+	struct scfs_sb_info *sbi = SCFS_S(sii->vfs_inode.i_sb);
+	unsigned long valloc_size = PAGE_ALIGN(sii->cinfo_array_size) + PAGE_SIZE;
+#endif
+
+	if (sii->flags & SCFS_CINFO_OVER_PAGESIZE) {
+#if SCFS_PROFILE_MEM
+		atomic_sub(valloc_size, &sbi->vmalloc_size);
+#endif
+		vfree(addr);
+	} else {
+#if SCFS_PROFILE_MEM
+		atomic_sub(sii->cinfo_array_size, &sbi->kmalloc_size);
+#endif
+		kfree(addr);
+	}
+}

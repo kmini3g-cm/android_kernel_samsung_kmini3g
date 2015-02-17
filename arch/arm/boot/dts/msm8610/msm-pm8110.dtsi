@@ -93,10 +93,9 @@
 			sec,capacity-max = <1000>;
 			sec,capacity-max-margin = <50>;
 			sec,capacity-min = <0>;
-			sec,ui-full-soc = <99>;
-			sec,ui-full-current = <150>;
+			sec,ui-full-soc = <97>;
+			sec,ui-full-current = <170>;
 			sec,ui-full-count = <2>;
-			sec,en-charging-term-time = <0>;
 			sec,charging-term-time = <40>;
 			sec,recharging-voltage = <4300>;
 			sec,poweroff-check-soc = <1>;
@@ -344,7 +343,7 @@
 			status = "disabled";
 
 			qcom,r-sense-uohm = <10000>;
-			qcom,v-cutoff-uv = <3350000>;
+			qcom,v-cutoff-uv = <3400000>;
 			qcom,max-voltage-uv = <4350000>;
 			qcom,r-conn-mohm = <0>;
 			qcom,shutdown-soc-valid-limit = <100>;
@@ -365,6 +364,10 @@
 			qcom,bms-vadc = <&pm8110_vadc>;
 			qcom,bms-iadc = <&pm8110_iadc>;
 			qcom,bms-adc_tm = <&pm8110_adc_tm>;
+
+			qcom,batt-pres-status@1208 {
+				reg = <0x1208 0x1>;
+			};
 
 			qcom,bms-iadc@3800 {
 				reg = <0x3800 0x100>;

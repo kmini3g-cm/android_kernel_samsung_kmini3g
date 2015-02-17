@@ -68,7 +68,9 @@
 #include <linux/shmem_fs.h>
 #include <linux/slab.h>
 #include <linux/perf_event.h>
-
+#ifdef CONFIG_TIMA_RKP_COHERENT_TT
+#include <linux/memblock.h>
+#endif
 #include <asm/io.h>
 #include <asm/bugs.h>
 #include <asm/setup.h>
@@ -522,7 +524,7 @@ static void __init mm_init(void)
 	vmalloc_init();
 }
 
-#ifdef CONFIG_CRYPTO_FIPS
+#ifdef CONFIG_CRYPTO_FIPS_OLD_INTEGRITY_CHECK
 /* change@ksingh.sra-dallas - in kernel 3.4 and + 
  * the mmu clears the unused/unreserved memory with default RAM initial sticky 
  * bit data.
@@ -562,7 +564,7 @@ static void __init integrity_mem_reserve(void) {
 	printk(KERN_NOTICE "FIPS integrity_mem_reservoir = %ld\n", integrity_mem_reservoir);
 }
 // change@ksingh.sra-dallas - end
-#endif // CONFIG_CRYPTO_FIPS
+#endif // CONFIG_CRYPTO_FIPS_OLD_INTEGRITY_CHECK
 
 asmlinkage void __init start_kernel(void)
 {
@@ -613,12 +615,12 @@ asmlinkage void __init start_kernel(void)
 
 	jump_label_init();
 
-#ifdef CONFIG_CRYPTO_FIPS	
+#ifdef CONFIG_CRYPTO_FIPS_OLD_INTEGRITY_CHECK
 	/* change@ksingh.sra-dallas
 	 * marks the zImage copy area as reserve before mmu can clear it
 	 */
  	integrity_mem_reserve();
-#endif // CONFIG_CRYPTO_FIPS
+#endif // CONFIG_CRYPTO_FIPS_OLD_INTEGRITY_CHECK
 	/*
 	 * These use large bootmem allocations and must precede
 	 * kmem_cache_init()
@@ -956,9 +958,7 @@ static noinline int init_post(void)
 #endif
 	mark_rodata_ro();
 #ifdef CONFIG_TIMA_RKP
-#ifdef CONFIG_TIMA_RKP_30
-	tima_send_cmd5((unsigned long)_stext, (unsigned long)init_mm.pgd, (unsigned long)__init_begin, (unsigned long)__init_end,(unsigned long)__pa(pgt_bit_array),0x3f80c221);
-#else 
+#ifndef CONFIG_TIMA_RKP_30
 	tima_send_cmd4((unsigned long)_stext, (unsigned long)init_mm.pgd, (unsigned long)__init_begin, (unsigned long)__init_end, 0x3f80c221);
 #endif
 #endif
@@ -995,6 +995,9 @@ static noinline int init_post(void)
 
 static int __init kernel_init(void * unused)
 {
+#ifdef CONFIG_TIMA_RKP_COHERENT_TT
+	struct memblock_type *type = (struct memblock_type*)(&memblock.memory);
+#endif
 	/*
 	 * Wait until kthreadd is all set-up.
 	 */
@@ -1012,6 +1015,14 @@ static int __init kernel_init(void * unused)
 
 	smp_prepare_cpus(setup_max_cpus);
 
+#ifdef CONFIG_TIMA_RKP
+#ifdef CONFIG_TIMA_RKP_30
+#ifdef CONFIG_TIMA_RKP_COHERENT_TT
+	tima_send_cmd2(type->cnt, __pa(type->regions), 0x3f804221);
+#endif
+	tima_send_cmd5((unsigned long)_stext, (unsigned long)init_mm.pgd, (unsigned long)__init_begin, (unsigned long)__init_end,(unsigned long)__pa(pgt_bit_array),0x3f80c221);
+#endif
+#endif
 	do_pre_smp_initcalls();
 	lockup_detector_init();
 
